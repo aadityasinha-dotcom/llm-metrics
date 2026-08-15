@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-__all__ = ["Observation", "ObservationType", "Trace"]
+__all__ = ["Observation", "ObservationStatus", "ObservationType", "Trace"]
 
 
 def _new_id() -> str:
@@ -71,6 +71,13 @@ class ObservationType:
     GENERATION = "generation"
     TOOL = "tool"
     RETRIEVAL = "retrieval"
+
+
+class ObservationStatus:
+    """Outcome of a call, mapping to the OTel span status codes."""
+
+    OK = "ok"
+    ERROR = "error"
 
 
 @dataclass
@@ -128,6 +135,8 @@ class Observation:
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     latency_ms: float | None = None
+    status: str = ObservationStatus.OK
+    status_message: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     start_time: datetime = field(default_factory=_utcnow)
     end_time: datetime | None = None
@@ -136,6 +145,16 @@ class Observation:
         self.start_time = _as_utc(self.start_time)
         if self.end_time is not None:
             self.end_time = _as_utc(self.end_time)
+
+    def fail(self, exc: BaseException) -> None:
+        """Record that the wrapped call raised.
+
+        Stores the type and message, never the traceback: a traceback carries
+        source lines and local context that a user did not consent to ship to
+        an observability backend.
+        """
+        self.status = ObservationStatus.ERROR
+        self.status_message = f"{type(exc).__name__}: {exc}"[:500]
 
     def end(self, when: datetime | None = None) -> None:
         """Mark the observation complete and derive ``latency_ms`` from the
@@ -152,10 +171,12 @@ class Observation:
             "type": self.type,
             "trace_id": self.trace_id,
             "name": self.name,
+            "status": self.status,
             "metadata": self.metadata,
             "start_time": _iso(self.start_time),
         }
         _put(payload, "parent_id", self.parent_id)
+        _put(payload, "status_message", self.status_message)
         _put(payload, "model", self.model)
         _put(payload, "input", self.input)
         _put(payload, "output", self.output)

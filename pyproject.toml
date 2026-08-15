@@ -32,6 +32,7 @@ dependencies = ["httpx>=0.23,<1.0"]
 openai = ["openai>=1.0"]
 langchain = ["langchain-core>=0.1"]
 dev = [
+    "langchain-core>=0.1",
     "openai>=1.0",
     "pytest>=7.4",
     "pytest-asyncio>=0.21",

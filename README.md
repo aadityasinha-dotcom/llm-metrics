@@ -82,6 +82,26 @@ Token counts on a *streamed* response require
 add it for you: it appends a final chunk with an empty `choices` list, and code
 doing `chunk.choices[0]` unguarded would start raising the moment it was wrapped.
 
+## LangChain
+
+```python
+from llmobserve.integrations.langchain import LlmObserveTracer
+
+tracer = LlmObserveTracer()
+chain.invoke({"question": "..."}, config={"callbacks": [tracer]})
+```
+
+Chains become spans, LLM calls become generations, tools and retrievers get
+their own types. Streamed generations also record `time_to_first_token_ms`.
+One tracer instance is safe to reuse across invocations and share between
+threads.
+
+Unlike the rest of the SDK, nesting here comes from LangChain's own
+`run_id`/`parent_run_id` tree rather than from contextvars — LangChain may
+invoke callbacks from a thread where the ambient context is empty. The ambient
+context is consulted once, for the root run, so a chain inside an `@observe`
+function joins that trace instead of starting a new one.
+
 ## Tracing across threads
 
 `asyncio` tasks inherit the ambient trace and stay siblings under `gather`, so
@@ -100,6 +120,10 @@ with context.adopt(snap):
 
 ## Status
 
-`models.py`, `buffer.py`, `client.py`, `context.py`, `decorator.py`, and
-`integrations/openai.py`. The LangChain callback handler is still to come — see
-the build order in `CLAUDE.md`.
+Every module in the `CLAUDE.md` build order is in place: `models.py`,
+`buffer.py`, `client.py`, `context.py`, `decorator.py`, and both integrations.
+
+Not yet done: `tests/test_contract.py`, which needs the API's published
+`openapi.json`. Until it exists, the request envelope (`{"events": [...]}`),
+the `Authorization: Bearer` header, and the assumption that ingest upserts
+(children can arrive in a batch before their parent) are unverified.

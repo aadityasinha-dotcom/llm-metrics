@@ -43,7 +43,7 @@ from typing import Any, TypeVar, cast, overload
 from llmobserve import _runtime, context
 from llmobserve.models import Observation, ObservationType, Trace
 
-__all__ = ["finish_span", "observe", "open_span"]
+__all__ = ["finish_span", "observe", "open_span", "summarise"]
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -164,6 +164,18 @@ def _summarise(value: Any, limit: int, depth: int = 0) -> Any:
     return _clip(_safe_repr(value), limit)
 
 
+def summarise(value: Any) -> Any:
+    """Bound an arbitrary value using the current settings. Never raises.
+
+    Exposed for integrations, which receive framework payloads of unbounded
+    size and shape and need the same treatment the decorator gives arguments.
+    """
+    try:
+        return _summarise(value, _runtime.current_settings().max_value_chars)
+    except Exception:  # noqa: BLE001 - rule 2
+        return None
+
+
 def _safe_repr(value: Any) -> str:
     """``repr`` that cannot take the host app down.
 
@@ -212,18 +224,28 @@ def open_span(
     *,
     input_value: Any = None,
     metadata: Mapping[str, Any] | None = None,
+    trace: Trace | None = None,
+    parent_id: str | None = None,
 ) -> _Span | None:
     """Open a span directly, without a function to introspect.
 
     The shared core of :func:`observe` and the integrations, which instrument
     third-party call sites where there is no signature to bind against.
     Returns ``None`` to mean "carry on uninstrumented" — never raises.
+
+    Args:
+        trace: Override the ambient trace. Needed by callback-style
+            integrations such as LangChain, which are handed an explicit run
+            tree and may be invoked from a thread where the contextvars are
+            empty.
+        parent_id: Override the ambient parent, for the same reason.
     """
     try:
         if not _runtime.is_enabled():
             return None
 
-        trace = context.current_trace()
+        if trace is None:
+            trace = context.current_trace()
         created_trace = None
         if trace is None:
             # No trace open, so this call is the root of one.
@@ -234,7 +256,7 @@ def open_span(
             trace_id=trace.id,
             name=name,
             type=as_type,
-            parent_id=context.current_parent_id(),
+            parent_id=parent_id if parent_id is not None else context.current_parent_id(),
             metadata=dict(metadata) if metadata else {},
         )
         observation.input = input_value

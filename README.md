@@ -8,6 +8,10 @@ pip install "llmobserve[openai]"      # OpenAI wrapper
 pip install "llmobserve[langchain]"   # LangChain callback handler
 ```
 
+The SDK itself runs on Python 3.9+ with `httpx` as its only dependency. The
+integration extras need 3.10+, because current `openai` and `langchain-core`
+both dropped 3.9 — CI reflects that split.
+
 ## Usage
 
 ```python

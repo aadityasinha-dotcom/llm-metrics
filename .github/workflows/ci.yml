@@ -1,0 +1,154 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A new push to a branch makes the in-flight run for that branch pointless.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_COLOR: "1"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+jobs:
+  lint:
+    name: lint (ruff + mypy)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      # Runs once on a modern Python rather than across the matrix. Current
+      # mypy refuses to *run* on 3.9, and five mypy versions reporting five
+      # different things is noise, not coverage.
+      #
+      # The extras are required here even though they are optional at runtime:
+      # LlmObserveTracer subclasses BaseCallbackHandler, and without
+      # langchain-core installed that base resolves to Any, which
+      # `mypy --strict` rejects via disallow_subclassing_any.
+      - run: make install
+      - run: make lint
+
+  test:
+    # The real support matrix. Base install only — no openai, no langchain —
+    # so this doubles as proof that the extras are genuinely optional and that
+    # httpx is the only hard runtime dependency. The two integration test
+    # modules skip themselves via importorskip.
+    name: test ${{ matrix.python-version }} (core)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install (no extras)
+        run: |
+          python -m pip install -e .
+          python -m pip install pytest
+
+      - name: Import must not need the extras or start a thread
+        run: |
+          python - <<'PY'
+          import threading
+          before = threading.active_count()
+          import llmobserve
+          assert threading.active_count() == before, (
+              "importing llmobserve started a background thread; the pipeline "
+              "must stay lazy so `import llmobserve` is safe before a fork"
+          )
+          print("llmobserve", llmobserve.__version__, "imports cleanly on", __import__("sys").version.split()[0])
+          PY
+
+      - run: python -m pytest -q
+
+  integrations:
+    # openai and langchain-core both require Python >= 3.10, so the provider
+    # integrations cannot be exercised on 3.9. The SDK itself still supports
+    # 3.9 — that is what the `test` job above covers.
+    name: integrations ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - run: python -m pip install -e ".[dev,openai,langchain]"
+
+      - name: Fail if the integration suites silently skipped
+        run: python -c "import openai, langchain_core"
+
+      - run: python -m pytest -q
+
+  build:
+    name: build + packaging
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - run: python -m pip install build twine
+      - run: python -m build
+      - run: python -m twine check dist/*
+
+      - name: py.typed must ship in the wheel
+        run: |
+          python - <<'PY'
+          import glob, zipfile
+          wheel = glob.glob("dist/*.whl")[0]
+          names = zipfile.ZipFile(wheel).namelist()
+          assert "llmobserve/py.typed" in names, (
+              f"py.typed missing from {wheel}; type hints would be invisible "
+              f"to downstream mypy. Contents: {names}"
+          )
+          print(f"{wheel}: py.typed present, {len(names)} entries")
+          PY
+
+      - name: Installed wheel imports with only httpx present
+        run: |
+          python -m venv /tmp/fresh
+          /tmp/fresh/bin/pip install --quiet dist/*.whl
+          /tmp/fresh/bin/python -c "
+          import importlib.util as u, llmobserve
+          assert u.find_spec('openai') is None, 'openai leaked into the base install'
+          assert u.find_spec('langchain_core') is None, 'langchain leaked into the base install'
+          print('base install pulls in httpx only:', llmobserve.__version__)
+          "
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/

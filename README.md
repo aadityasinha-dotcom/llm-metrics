@@ -14,16 +14,17 @@ pip install "llmobserve[langchain]"   # LangChain callback handler
 import llmobserve
 from llmobserve import observe
 
+
 @observe(as_type="tool")
-def search(query: str) -> list[str]:
-    ...
+def search(query: str) -> list[str]: ...
+
 
 @observe(as_type="generation", name="gpt-4o")
-def complete(messages: list[dict]) -> dict:
-    ...
+def complete(messages: list[dict]) -> dict: ...
+
 
 @observe()
-def answer(question: str) -> str:            # becomes the root of the trace
+def answer(question: str) -> str:  # becomes the root of the trace
     return complete(search(question))["content"]
 ```
 
@@ -62,6 +63,25 @@ characters per value. Turn it off per-decorator with
 
 Overhead is ~50 us per call with capture on — 0.01% of a 500 ms LLM call.
 
+## OpenAI
+
+```python
+from openai import OpenAI
+from llmobserve.integrations.openai import wrap_openai
+
+client = wrap_openai(OpenAI())
+client.chat.completions.create(model="gpt-4o", messages=[...])
+```
+
+Every completion becomes a `generation` observation with the model, messages,
+response, token counts, and latency — nesting under an enclosing `@observe`
+trace if there is one. Sync and async clients, streaming and not.
+
+Token counts on a *streamed* response require
+`stream_options={"include_usage": True}` on your call. The integration will not
+add it for you: it appends a final chunk with an empty `choices` list, and code
+doing `chunk.choices[0]` unguarded would start raising the moment it was wrapped.
+
 ## Tracing across threads
 
 `asyncio` tasks inherit the ambient trace and stay siblings under `gather`, so
@@ -80,6 +100,6 @@ with context.adopt(snap):
 
 ## Status
 
-`models.py`, `buffer.py`, `client.py`, `context.py`, and `decorator.py`. The
-OpenAI and LangChain integrations are still to come — see the build order in
-`CLAUDE.md`.
+`models.py`, `buffer.py`, `client.py`, `context.py`, `decorator.py`, and
+`integrations/openai.py`. The LangChain callback handler is still to come — see
+the build order in `CLAUDE.md`.

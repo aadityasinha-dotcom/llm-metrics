@@ -43,7 +43,7 @@ from typing import Any, TypeVar, cast, overload
 from llmobserve import _runtime, context
 from llmobserve.models import Observation, ObservationType, Trace
 
-__all__ = ["observe"]
+__all__ = ["finish_span", "observe", "open_span"]
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -206,44 +206,80 @@ def _capture_arguments(
 # --------------------------------------------------------------------------- #
 
 
-def _begin(spec: _Spec, args: Sequence[Any], kwargs: Mapping[str, Any]) -> _Span | None:
-    """Open a span, or return ``None`` to mean "run uninstrumented"."""
+def open_span(
+    name: str,
+    as_type: str,
+    *,
+    input_value: Any = None,
+    metadata: Mapping[str, Any] | None = None,
+) -> _Span | None:
+    """Open a span directly, without a function to introspect.
+
+    The shared core of :func:`observe` and the integrations, which instrument
+    third-party call sites where there is no signature to bind against.
+    Returns ``None`` to mean "carry on uninstrumented" — never raises.
+    """
     try:
         if not _runtime.is_enabled():
             return None
-        settings = _runtime.current_settings()
 
         trace = context.current_trace()
         created_trace = None
         if trace is None:
             # No trace open, so this call is the root of one.
-            created_trace = Trace(name=spec.name)
+            created_trace = Trace(name=name)
             trace = created_trace
 
         observation = Observation(
             trace_id=trace.id,
-            name=spec.name,
-            type=spec.as_type,
+            name=name,
+            type=as_type,
             parent_id=context.current_parent_id(),
-            metadata=dict(spec.metadata) if spec.metadata else {},
+            metadata=dict(metadata) if metadata else {},
         )
-
-        capture = spec.capture_input if spec.capture_input is not None else settings.capture_input
-        if capture:
-            observation.input = _capture_arguments(spec, args, kwargs, settings.max_value_chars)
-
+        observation.input = input_value
         return _Span(observation, created_trace)
     except Exception:  # noqa: BLE001 - rule 2: fall back to no instrumentation
         return None
 
 
-def _finish(
+def _begin(spec: _Spec, args: Sequence[Any], kwargs: Mapping[str, Any]) -> _Span | None:
+    """Open a span for a decorated call."""
+    try:
+        if not _runtime.is_enabled():
+            return None
+        settings = _runtime.current_settings()
+        capture = spec.capture_input if spec.capture_input is not None else settings.capture_input
+        return open_span(
+            spec.name,
+            spec.as_type,
+            input_value=(
+                _capture_arguments(spec, args, kwargs, settings.max_value_chars)
+                if capture
+                else None
+            ),
+            metadata=spec.metadata,
+        )
+    except Exception:  # noqa: BLE001 - rule 2
+        return None
+
+
+def finish_span(
     span: _Span,
-    spec: _Spec,
     output: Any = None,
     exc: BaseException | None = None,
+    *,
+    capture_output: bool | None = None,
+    summarise_output: bool = True,
 ) -> None:
-    """Close a span and queue it. Never raises."""
+    """Close a span and queue it. Never raises.
+
+    Args:
+        summarise_output: ``False`` when the caller has already reduced the
+            output itself — integrations extract a small, meaningful shape from
+            a provider response rather than letting the generic summariser
+            flatten it.
+    """
     try:
         observation = span.observation
         observation.latency_ms = (time.perf_counter() - span.started) * 1000.0
@@ -251,11 +287,11 @@ def _finish(
             observation.fail(exc)
         elif output is not None:
             settings = _runtime.current_settings()
-            capture = (
-                spec.capture_output if spec.capture_output is not None else settings.capture_output
-            )
+            capture = capture_output if capture_output is not None else settings.capture_output
             if capture:
-                observation.output = _summarise(output, settings.max_value_chars)
+                observation.output = (
+                    _summarise(output, settings.max_value_chars) if summarise_output else output
+                )
         observation.end()
 
         # Trace first: it is the parent entity, and the buffer preserves order.
@@ -270,6 +306,11 @@ def _finish(
         # and every later call in this task nests under a dead observation.
         with contextlib.suppress(Exception):  # rule 2
             span.stack.close()
+
+
+def _finish(span: _Span, spec: _Spec, output: Any = None, exc: BaseException | None = None) -> None:
+    """``finish_span`` with the decorator's per-function capture setting."""
+    finish_span(span, output, exc, capture_output=spec.capture_output)
 
 
 # --------------------------------------------------------------------------- #

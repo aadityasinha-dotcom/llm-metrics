@@ -27,8 +27,24 @@ pip install "llmobserve[langchain]"   # LangChain callback handler
 
 Explicit arguments to `IngestClient` beat environment variables, which beat defaults.
 
+## Tracing across threads
+
+`asyncio` tasks inherit the ambient trace and stay siblings under `gather`, so
+nesting works with no extra effort. **Threads inherit nothing** — a
+`ThreadPoolExecutor` worker starts with no trace and its observations become
+orphan roots. Carry the context across explicitly:
+
+```python
+ctx = contextvars.copy_context()          # stdlib, at the call site
+executor.submit(ctx.run, do_work, arg)
+
+snap = context.snapshot()                 # or, across a queue
+with context.adopt(snap):
+    do_work(arg)
+```
+
 ## Status
 
-`models.py`, `buffer.py`, and `client.py`. Context propagation, the `@observe`
-decorator, and the integrations are still to come — see the build order in
+`models.py`, `buffer.py`, `client.py`, and `context.py`. The `@observe`
+decorator and the integrations are still to come — see the build order in
 `CLAUDE.md`.

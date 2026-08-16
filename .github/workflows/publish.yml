@@ -1,0 +1,92 @@
+name: Publish
+
+# Publishing is deliberately manual. A GitHub Release is the trigger for a real
+# PyPI upload; workflow_dispatch exists so a first release can be rehearsed
+# against TestPyPI, which is worth doing once since a version number on PyPI
+# can never be reused.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Index to publish to
+        required: true
+        default: testpypi
+        type: choice
+        options: [testpypi, pypi]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build + verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: python -m pip install build twine
+      - run: python -m build
+      - run: python -m twine check dist/*
+
+      # Same assertions `make check-package` runs.
+      - run: python scripts/check_wheel.py
+
+      # A tag that disagrees with __version__ would publish a wheel nobody can
+      # correlate with a commit, and PyPI will not let the number be reused.
+      - name: Tag must match __version__
+        if: github.event_name == 'release'
+        run: |
+          python - <<'PY'
+          import os, re, pathlib
+          tag = os.environ["TAG"].lstrip("v")
+          source = pathlib.Path("llmobserve/_version.py").read_text()
+          version = re.search(r'__version__ = "([^"]+)"', source).group(1)
+          if tag != version:
+              raise SystemExit(
+                  f"release tag {tag!r} does not match __version__ {version!r}; "
+                  "bump llmobserve/_version.py or retag"
+              )
+          print(f"tag and __version__ agree: {version}")
+          PY
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    name: publish to ${{ github.event_name == 'release' && 'pypi' || inputs.target }}
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Set required reviewers on this environment in repo settings to gate uploads.
+    environment:
+      name: ${{ github.event_name == 'release' && 'pypi' || inputs.target }}
+      url: https://pypi.org/p/llmobserve
+    permissions:
+      # Trusted publishing. No API token is stored anywhere; PyPI verifies this
+      # workflow's OIDC identity instead.
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to TestPyPI
+        if: github.event_name == 'workflow_dispatch' && inputs.target == 'testpypi'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+      - name: Publish to PyPI
+        if: github.event_name == 'release' || inputs.target == 'pypi'
+        uses: pypa/gh-action-pypi-publish@release/v1

@@ -1,6 +1,10 @@
 # llmobserve
 
-Python SDK for the [llm-observe](https://github.com/llm-observe) platform.
+[![CI](https://github.com/aadityasinha-dotcom/llmobserve-python/actions/workflows/ci.yml/badge.svg)](https://github.com/aadityasinha-dotcom/llmobserve-python/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/badge/python-3.9%20%E2%80%93%203.13-blue)](https://github.com/aadityasinha-dotcom/llmobserve-python)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
+Python SDK for the llm-observe platform.
 
 ```bash
 pip install llmobserve

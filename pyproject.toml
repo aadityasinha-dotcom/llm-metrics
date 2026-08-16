@@ -51,7 +51,7 @@ path = "llmobserve/_version.py"
 packages = ["llmobserve"]
 
 [tool.hatch.build.targets.sdist]
-include = ["llmobserve", "tests", "README.md", "CLAUDE.md"]
+include = ["llmobserve", "tests", "scripts", "Makefile", "README.md", "CLAUDE.md"]
 
 # --------------------------------------------------------------------------- #
 # ruff
@@ -106,7 +106,7 @@ warn_unreachable = true
 disallow_any_generics = true
 no_implicit_reexport = true
 show_error_codes = true
-files = ["llmobserve", "tests"]
+files = ["llmobserve", "tests", "scripts"]
 
 [[tool.mypy.overrides]]
 # Optional integration deps are not installed in every environment.

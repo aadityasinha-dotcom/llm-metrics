@@ -68,7 +68,13 @@ make install    # dev install with extras
 make test       # pytest
 make lint       # ruff + mypy
 make build      # build wheel
+make ci         # everything CI runs, minus the 3.9-3.13 matrix
 ```
+
+`make ci` is the pre-push check. It cannot cover the version matrix — that
+needs interpreters a single checkout does not have, so CI runs `test` on
+3.9-3.13. The provider extras are only exercised on 3.10+, because current
+`openai` and `langchain-core` both dropped 3.9.
 
 ## Build order
 

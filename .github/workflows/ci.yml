@@ -124,29 +124,9 @@ jobs:
       - run: python -m build
       - run: python -m twine check dist/*
 
-      - name: py.typed must ship in the wheel
-        run: |
-          python - <<'PY'
-          import glob, zipfile
-          wheel = glob.glob("dist/*.whl")[0]
-          names = zipfile.ZipFile(wheel).namelist()
-          assert "llmobserve/py.typed" in names, (
-              f"py.typed missing from {wheel}; type hints would be invisible "
-              f"to downstream mypy. Contents: {names}"
-          )
-          print(f"{wheel}: py.typed present, {len(names)} entries")
-          PY
-
-      - name: Installed wheel imports with only httpx present
-        run: |
-          python -m venv /tmp/fresh
-          /tmp/fresh/bin/pip install --quiet dist/*.whl
-          /tmp/fresh/bin/python -c "
-          import importlib.util as u, llmobserve
-          assert u.find_spec('openai') is None, 'openai leaked into the base install'
-          assert u.find_spec('langchain_core') is None, 'langchain leaked into the base install'
-          print('base install pulls in httpx only:', llmobserve.__version__)
-          "
+      # Same script `make check-package` runs, so local and CI cannot drift.
+      - name: Packaging assertions (py.typed ships, extras stay optional)
+        run: python scripts/check_wheel.py
 
       - uses: actions/upload-artifact@v4
         with:

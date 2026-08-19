@@ -1,6 +1,6 @@
 """HTTP transport for the ingest API.
 
-This is the ``flush_fn`` the :class:`~llmobserve.buffer.EventBuffer` calls. It
+This is the ``flush_fn`` the :class:`~llm_metrics.buffer.EventBuffer` calls. It
 runs exclusively on the buffer's flush thread, never on the caller's, so it is
 allowed to block — but only for as long as its deadline permits.
 
@@ -15,9 +15,9 @@ that other batches need.
 
 Deadlines
 ---------
-:meth:`IngestClient.send` takes a live :class:`~llmobserve.buffer.Deadline`.
+:meth:`IngestClient.send` takes a live :class:`~llm_metrics.buffer.Deadline`.
 It is unarmed during normal operation — the flush thread is a background
-thread and nobody is waiting on it. :meth:`~llmobserve.buffer.EventBuffer.shutdown`
+thread and nobody is waiting on it. :meth:`~llm_metrics.buffer.EventBuffer.shutdown`
 arms it, and the client abandons retries (and shortens its per-request timeout)
 to respect the remaining budget.
 
@@ -43,8 +43,8 @@ from typing import Any
 
 import httpx
 
-from llmobserve._version import __version__
-from llmobserve.buffer import Deadline
+from llm_metrics._version import __version__
+from llm_metrics.buffer import Deadline
 
 __all__ = ["ClientStats", "IngestClient"]
 
@@ -56,9 +56,9 @@ DEFAULT_MAX_ATTEMPTS = 3
 DEFAULT_BACKOFF_BASE = 0.5
 DEFAULT_BACKOFF_MAX = 8.0
 
-ENV_API_KEY = "LLMOBSERVE_API_KEY"
-ENV_HOST = "LLMOBSERVE_HOST"
-ENV_DEBUG = "LLMOBSERVE_DEBUG"
+ENV_API_KEY = "LLM_METRICS_API_KEY"
+ENV_HOST = "LLM_METRICS_HOST"
+ENV_DEBUG = "LLM_METRICS_DEBUG"
 
 #: Statuses worth trying again. Everything else in the 4xx range is a client
 #: bug or a bad key, and will fail identically on retry.
@@ -102,9 +102,9 @@ class IngestClient:
     """POSTs batches to ``{host}/v1/ingest``.
 
     Args:
-        api_key: Falls back to ``$LLMOBSERVE_API_KEY``. Without one the client
+        api_key: Falls back to ``$LLM_METRICS_API_KEY``. Without one the client
             is inert: it drops every batch and never opens a socket.
-        host: Falls back to ``$LLMOBSERVE_HOST``, then to the cloud endpoint.
+        host: Falls back to ``$LLM_METRICS_HOST``, then to the cloud endpoint.
         timeout: Per-request timeout in seconds.
         max_attempts: Total attempts per batch, including the first.
         backoff_base: First retry delay. Doubles each attempt, capped at
@@ -145,7 +145,7 @@ class IngestClient:
         if not self.api_key:
             self._warn_once(
                 "no_key",
-                f"llmobserve: no API key (set ${ENV_API_KEY}); traces will be dropped",
+                f"llm-metrics: no API key (set ${ENV_API_KEY}); traces will be dropped",
             )
 
         self._register_fork_handler()
@@ -251,7 +251,7 @@ class IngestClient:
         if status in AUTH_STATUS:
             self._warn_once(
                 f"auth_{status}",
-                f"llmobserve: ingest API rejected the API key (HTTP {status}); "
+                f"llm-metrics: ingest API rejected the API key (HTTP {status}); "
                 "traces will be dropped",
             )
             return "permanent", f"HTTP {status}"
@@ -296,7 +296,7 @@ class IngestClient:
         self.stats.last_error = detail
         if permanent:
             self.stats.permanent_failures += 1
-        self._debug(f"llmobserve: dropped {len(payload)} event(s): {detail}")
+        self._debug(f"llm-metrics: dropped {len(payload)} event(s): {detail}")
 
     @staticmethod
     def _remaining(deadline: Deadline | None) -> float | None:
@@ -322,7 +322,7 @@ class IngestClient:
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
             "X-SDK-Version": __version__,
-            "User-Agent": f"llmobserve-python/{__version__}",
+            "User-Agent": f"llm-metrics-python/{__version__}",
         }
 
     # -------------------------------------------------------------- http client

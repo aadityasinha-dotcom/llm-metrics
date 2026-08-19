@@ -15,10 +15,10 @@ from collections.abc import AsyncIterator, Iterator
 
 import pytest
 
-from llmobserve import _runtime, observe
-from llmobserve.buffer import EventBuffer
-from llmobserve.decorator import _summarise
-from llmobserve.models import ObservationStatus, ObservationType
+from llm_metrics import _runtime, observe
+from llm_metrics.buffer import EventBuffer
+from llm_metrics.decorator import _summarise
+from llm_metrics.models import ObservationStatus, ObservationType
 
 
 class Collector:
@@ -622,7 +622,7 @@ def test_a_failed_finish_does_not_leak_the_context_scope(
 ) -> None:
     """The nastiest failure mode: if _finish dies before closing the scope,
     every later call in the task nests under a dead observation."""
-    from llmobserve import context
+    from llm_metrics import context
 
     calls = {"n": 0}
 

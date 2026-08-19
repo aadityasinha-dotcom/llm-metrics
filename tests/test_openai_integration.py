@@ -18,11 +18,11 @@ from typing import Any
 import httpx
 import pytest
 
-from llmobserve import _runtime
-from llmobserve.buffer import EventBuffer
-from llmobserve.decorator import observe
-from llmobserve.integrations.openai import wrap_openai
-from llmobserve.models import ObservationStatus, ObservationType
+from llm_metrics import _runtime
+from llm_metrics.buffer import EventBuffer
+from llm_metrics.decorator import observe
+from llm_metrics.integrations.openai import wrap_openai
+from llm_metrics.models import ObservationStatus, ObservationType
 
 openai = pytest.importorskip("openai")
 

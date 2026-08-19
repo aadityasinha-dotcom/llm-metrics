@@ -18,8 +18,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from llmobserve import context
-from llmobserve.context import (
+from llm_metrics import context
+from llm_metrics.context import (
     ContextSnapshot,
     adopt,
     current_parent_id,
@@ -29,7 +29,7 @@ from llmobserve.context import (
     use_observation,
     use_trace,
 )
-from llmobserve.models import Observation, Trace
+from llm_metrics.models import Observation, Trace
 
 
 @pytest.fixture(autouse=True)

@@ -19,8 +19,8 @@ from pathlib import Path
 
 import pytest
 
-from llmobserve.buffer import Deadline, EventBuffer
-from llmobserve.models import Observation
+from llm_metrics.buffer import Deadline, EventBuffer
+from llm_metrics.models import Observation
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -300,7 +300,7 @@ def run_child(body: str, timeout: float = 30.0) -> subprocess.CompletedProcess[s
 ATEXIT_SCRIPT = """
 import sys
 sys.path.insert(0, {root!r})
-from llmobserve.buffer import Deadline, EventBuffer
+from llm_metrics.buffer import Deadline, EventBuffer
 
 def flush(payload, deadline=None):
     print("FLUSHED", len(payload), flush=True)
@@ -327,7 +327,7 @@ def test_atexit_flushes_events_a_short_script_would_otherwise_lose() -> None:
 WEDGED_EXIT_SCRIPT = """
 import sys, threading
 sys.path.insert(0, {root!r})
-from llmobserve.buffer import Deadline, EventBuffer
+from llm_metrics.buffer import Deadline, EventBuffer
 
 def flush(payload, deadline=None):
     threading.Event().wait()  # blocks forever

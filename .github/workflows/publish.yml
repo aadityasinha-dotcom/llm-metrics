@@ -45,12 +45,12 @@ jobs:
           python - <<'PY'
           import os, re, pathlib
           tag = os.environ["TAG"].lstrip("v")
-          source = pathlib.Path("llmobserve/_version.py").read_text()
+          source = pathlib.Path("llm_metrics/_version.py").read_text()
           version = re.search(r'__version__ = "([^"]+)"', source).group(1)
           if tag != version:
               raise SystemExit(
                   f"release tag {tag!r} does not match __version__ {version!r}; "
-                  "bump llmobserve/_version.py or retag"
+                  "bump llm_metrics/_version.py or retag"
               )
           print(f"tag and __version__ agree: {version}")
           PY
@@ -70,7 +70,7 @@ jobs:
     # Set required reviewers on this environment in repo settings to gate uploads.
     environment:
       name: ${{ github.event_name == 'release' && 'pypi' || inputs.target }}
-      url: https://pypi.org/p/llmobserve
+      url: https://pypi.org/p/llm-metrics
     permissions:
       # Trusted publishing. No API token is stored anywhere; PyPI verifies this
       # workflow's OIDC identity instead.

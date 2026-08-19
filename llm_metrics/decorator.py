@@ -4,9 +4,9 @@
     def answer(question: str) -> str:
         ...
 
-Wrapping a function records one :class:`~llmobserve.models.Observation`: how
+Wrapping a function records one :class:`~llm_metrics.models.Observation`: how
 long it took, what went in, what came out, and whether it raised. If no trace
-is open, a root :class:`~llmobserve.models.Trace` is created and closed around
+is open, a root :class:`~llm_metrics.models.Trace` is created and closed around
 it; if one is, the observation nests under whatever is currently open.
 
 The load-bearing rule
@@ -40,8 +40,8 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mappin
 from contextlib import ExitStack, contextmanager
 from typing import Any, TypeVar, cast, overload
 
-from llmobserve import _runtime, context
-from llmobserve.models import Observation, ObservationType, Trace
+from llm_metrics import _runtime, context
+from llm_metrics.models import Observation, ObservationType, Trace
 
 __all__ = ["finish_span", "observe", "open_span", "summarise"]
 
@@ -371,7 +371,7 @@ def observe(
 
     Args:
         name: Defaults to the function's qualified name.
-        as_type: One of :class:`~llmobserve.models.ObservationType` — use
+        as_type: One of :class:`~llm_metrics.models.ObservationType` — use
             ``"generation"`` for LLM calls, ``"tool"`` for tool invocations.
         capture_input: Record the arguments. Defaults to the global setting.
         capture_output: Record the return value. Defaults to the global setting.

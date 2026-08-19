@@ -40,8 +40,8 @@ DEFAULT_SHUTDOWN_TIMEOUT = 5.0
 
 @runtime_checkable
 class SupportsToDict(Protocol):
-    """Anything the buffer can serialise — :class:`~llmobserve.models.Trace`,
-    :class:`~llmobserve.models.Observation`, or a user-supplied equivalent."""
+    """Anything the buffer can serialise — :class:`~llm_metrics.models.Trace`,
+    :class:`~llm_metrics.models.Observation`, or a user-supplied equivalent."""
 
     def to_dict(self) -> dict[str, Any]: ...
 
@@ -208,7 +208,7 @@ class EventBuffer:
                 raise RuntimeError("EventBuffer has been shut down")
             thread = threading.Thread(
                 target=self._run,
-                name="llmobserve-flush",
+                name="llm_metrics-flush",
                 daemon=True,
             )
             self._thread = thread
@@ -396,10 +396,10 @@ class EventBuffer:
             delivered = self.shutdown()
         except Exception:  # noqa: BLE001 - never turn exit into a traceback
             return
-        if not delivered and os.environ.get("LLMOBSERVE_DEBUG"):
+        if not delivered and os.environ.get("LLM_METRICS_DEBUG"):
             remaining = len(self._queue)
             print(
-                f"llmobserve: abandoned {remaining} event(s) after "
+                f"llm-metrics: abandoned {remaining} event(s) after "
                 f"{self._shutdown_timeout}s shutdown timeout",
                 file=sys.stderr,
             )

@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "llmobserve"
+name = "llm-metrics"
 dynamic = ["version"]
-description = "Python SDK for the llm-observe platform — trace LLM calls with a decorator."
+description = "Trace LLM calls with a decorator — non-blocking, fail-silent observability SDK."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
@@ -42,18 +42,18 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/aadityasinha-dotcom/llmobserve-python"
-Issues = "https://github.com/aadityasinha-dotcom/llmobserve-python/issues"
-Changelog = "https://github.com/aadityasinha-dotcom/llmobserve-python/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/aadityasinha-dotcom/llm-metrics"
+Issues = "https://github.com/aadityasinha-dotcom/llm-metrics/issues"
+Changelog = "https://github.com/aadityasinha-dotcom/llm-metrics/blob/main/CHANGELOG.md"
 
 [tool.hatch.version]
-path = "llmobserve/_version.py"
+path = "llm_metrics/_version.py"
 
 [tool.hatch.build.targets.wheel]
-packages = ["llmobserve"]
+packages = ["llm_metrics"]
 
 [tool.hatch.build.targets.sdist]
-include = ["llmobserve", "tests", "scripts", "Makefile", "README.md", "CLAUDE.md"]
+include = ["llm_metrics", "tests", "scripts", "Makefile", "README.md", "CLAUDE.md"]
 
 # --------------------------------------------------------------------------- #
 # ruff
@@ -61,7 +61,7 @@ include = ["llmobserve", "tests", "scripts", "Makefile", "README.md", "CLAUDE.md
 [tool.ruff]
 line-length = 100
 target-version = "py39"
-src = ["llmobserve", "tests"]
+src = ["llm_metrics", "tests"]
 
 [tool.ruff.lint]
 select = [
@@ -90,7 +90,7 @@ ignore = [
 "tests/*" = ["ANN", "S101"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["llmobserve"]
+known-first-party = ["llm_metrics"]
 
 [tool.ruff.format]
 quote-style = "double"
@@ -108,7 +108,7 @@ warn_unreachable = true
 disallow_any_generics = true
 no_implicit_reexport = true
 show_error_codes = true
-files = ["llmobserve", "tests", "scripts"]
+files = ["llm_metrics", "tests", "scripts"]
 
 [[tool.mypy.overrides]]
 # Optional integration deps are not installed in every environment.

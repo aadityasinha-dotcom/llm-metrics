@@ -1,6 +1,6 @@
 """Ambient trace state, held in :mod:`contextvars`.
 
-Nesting works by keeping two things current: the :class:`~llmobserve.models.Trace`
+Nesting works by keeping two things current: the :class:`~llm_metrics.models.Trace`
 a call belongs to, and the id of the observation it sits under. A new
 observation reads both, records itself as the new parent for the duration of
 its body, and puts the old parent back on the way out. That is the whole
@@ -45,7 +45,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 
-from llmobserve.models import Observation, Trace
+from llm_metrics.models import Observation, Trace
 
 __all__ = [
     "ContextSnapshot",
@@ -61,10 +61,10 @@ __all__ = [
 # Module level, created once. A ContextVar built per call would be a fresh
 # variable each time and would never see anything set by an earlier one.
 _TRACE: contextvars.ContextVar[Trace | None] = contextvars.ContextVar(
-    "llmobserve_trace", default=None
+    "llm_metrics_trace", default=None
 )
 _PARENT_ID: contextvars.ContextVar[str | None] = contextvars.ContextVar(
-    "llmobserve_parent_id", default=None
+    "llm_metrics_parent_id", default=None
 )
 
 
@@ -75,7 +75,7 @@ def current_trace() -> Trace | None:
     """The trace this call belongs to, or ``None`` outside any trace.
 
     Returns the live object, so a caller holding it can still call
-    :meth:`~llmobserve.models.Trace.end`.
+    :meth:`~llm_metrics.models.Trace.end`.
     """
     return _TRACE.get()
 

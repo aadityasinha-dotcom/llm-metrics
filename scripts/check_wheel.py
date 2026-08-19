@@ -24,7 +24,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-REQUIRED_MEMBERS = ("llmobserve/py.typed", "llmobserve/__init__.py")
+REQUIRED_MEMBERS = ("llm_metrics/py.typed", "llm_metrics/__init__.py")
 
 #: Run inside a throwaway venv holding only the built wheel and its
 #: dependencies. Both assertions are about the installed artefact, not the
@@ -34,18 +34,18 @@ import importlib.util as util
 import threading
 
 before = threading.active_count()
-import llmobserve
+import llm_metrics
 
 assert threading.active_count() == before, (
-    "importing llmobserve started a background thread; the pipeline must stay "
-    "lazy so `import llmobserve` is safe in anything that forks after import"
+    "importing llm_metrics started a background thread; the pipeline must stay "
+    "lazy so `import llm_metrics` is safe in anything that forks after import"
 )
 for extra in ("openai", "langchain_core"):
     assert util.find_spec(extra) is None, (
         f"{extra} was installed by the base package; it is supposed to be an "
         f"optional extra, so something imports it at the top level"
     )
-print(f"    installed wheel imports cleanly: llmobserve {llmobserve.__version__}")
+print(f"    installed wheel imports cleanly: llm_metrics {llm_metrics.__version__}")
 """
 
 

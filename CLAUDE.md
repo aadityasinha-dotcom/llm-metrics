@@ -1,6 +1,6 @@
-# llmobserve-python
+# llm-metrics
 
-Python SDK for the llm-observe platform. Users `pip install llmobserve`, add an API
+Python SDK for the llm-metrics platform. Users `pip install llm-metrics`, add an API
 key, and decorate functions to send LLM traces to a self-hosted or cloud ingest API.
 
 This repo contains ONLY the SDK. The FastAPI backend, eval worker, and Next.js
@@ -56,7 +56,7 @@ Every request sends `X-SDK-Version`. The ingest endpoint is versioned (`/v1/`).
 
 - Python 3.9+ (CI matrix runs 3.9 through 3.13)
 - Zero required runtime dependencies beyond `httpx`. Integrations use extras:
-  `pip install llmobserve[openai]`
+  `pip install llm-metrics[openai]`
 - Type hints everywhere; `mypy --strict` passes
 - `ruff` for lint and format
 - Public API surface is only what's exported in `__init__.py` — keep it small

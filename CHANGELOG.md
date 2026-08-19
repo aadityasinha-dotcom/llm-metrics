@@ -42,21 +42,21 @@ auth header, and the assumption that ingest upserts are all unverified. See
 - **`wrap_openai`** — instruments `chat.completions`, `responses`, and
   `embeddings` on both `OpenAI` and `AsyncOpenAI`, streaming included. Never
   imports `openai`; everything is duck-typed.
-- **`LlmObserveTracer`** — LangChain callback handler. Chains become spans, LLM
+- **`LlmMetricsTracer`** — LangChain callback handler. Chains become spans, LLM
   calls generations, tools and retrievers their own types. Nesting comes from
   LangChain's `run_id`/`parent_run_id` rather than contextvars, since callbacks
   can arrive on any thread. Streamed generations record
   `time_to_first_token_ms`. The in-flight run map is bounded.
 - **`configure`, `flush`, `shutdown`** — optional explicit setup. Settings-only
   calls leave a running buffer and its queued events alone.
-- Configuration via `LLMOBSERVE_API_KEY`, `LLMOBSERVE_HOST`, `LLMOBSERVE_DEBUG`,
-  and `LLMOBSERVE_ENABLED`.
+- Configuration via `LLM_METRICS_API_KEY`, `LLM_METRICS_HOST`, `LLM_METRICS_DEBUG`,
+  and `LLM_METRICS_ENABLED`.
 - CI across Python 3.9–3.13, plus `make ci` for the same checks locally.
 
 ### Design guarantees
 
 - **Never blocks the caller.** ~50 µs of overhead per call with capture on,
-  ~0.2 µs with `LLMOBSERVE_ENABLED=0`.
+  ~0.2 µs with `LLM_METRICS_ENABLED=0`.
 - **Never crashes the host app.** A broken SDK degrades to an uninstrumented
   call; the result or exception reaches the caller unchanged.
 - **No client-side cost.** Token counts are sent; pricing stays server-side.
@@ -64,6 +64,13 @@ auth header, and the assumption that ingest upserts are all unverified. See
 
 ### Known gaps
 
+- **Not on PyPI yet.** The distribution name is `llm-metrics` and the import
+  name is `llm_metrics`; both were unclaimed when checked. The package was
+  renamed from `llmobserve` because that name and `llmobserve-sdk` belong to an
+  unrelated, actively published LLM-observability product, which collided on the
+  import name too — its wheel also ships a top-level `llmobserve/` package.
+  `.github/workflows/publish.yml` is wired for trusted publishing but has never
+  run.
 - `tests/test_contract.py` does not exist yet — it needs the API's published
   `openapi.json`. Until then these are assumptions, not facts:
   - the request envelope is `{"events": [...]}`
@@ -75,8 +82,8 @@ auth header, and the assumption that ingest upserts are all unverified. See
 - No sampling.
 - No public way to set `user_id` or trace metadata from inside a traced call.
 - No health/diagnostics accessor. The SDK fails silently by design, so today the
-  only signal is `LLMOBSERVE_DEBUG=1`.
+  only signal is `LLM_METRICS_DEBUG=1`.
 - The `os.register_at_fork` paths in `buffer.py` and `client.py` are not covered
   by tests.
 
-[Unreleased]: https://github.com/aadityasinha-dotcom/llmobserve-python/compare/main...HEAD
+[Unreleased]: https://github.com/aadityasinha-dotcom/llm-metrics/compare/main...HEAD

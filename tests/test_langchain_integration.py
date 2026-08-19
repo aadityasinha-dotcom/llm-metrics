@@ -19,9 +19,9 @@ from uuid import uuid4
 
 import pytest
 
-from llmobserve import _runtime, observe
-from llmobserve.buffer import EventBuffer
-from llmobserve.models import ObservationStatus, ObservationType
+from llm_metrics import _runtime, observe
+from llm_metrics.buffer import EventBuffer
+from llm_metrics.models import ObservationStatus, ObservationType
 
 pytest.importorskip("langchain_core")
 
@@ -35,7 +35,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableLambda
 from langchain_core.tools import tool
 
-from llmobserve.integrations.langchain import LlmObserveTracer
+from llm_metrics.integrations.langchain import LlmMetricsTracer
 
 # --------------------------------------------------------------------------- #
 # Harness
@@ -110,7 +110,7 @@ def chat_model(*replies: str, usage: dict[str, int] | None = None) -> GenericFak
 def test_a_chat_model_call_becomes_a_generation(pipeline: Pipeline) -> None:
     llm = chat_model("Paris.", usage={"input_tokens": 11, "output_tokens": 3, "total_tokens": 14})
 
-    result = llm.invoke("capital of France?", config={"callbacks": [LlmObserveTracer()]})
+    result = llm.invoke("capital of France?", config={"callbacks": [LlmMetricsTracer()]})
 
     assert result.content == "Paris.", "the caller must get the real result"
 
@@ -127,7 +127,7 @@ def test_a_chain_produces_a_nested_tree(pipeline: Pipeline) -> None:
     prompt = ChatPromptTemplate.from_template("Answer: {question}")
     chain = prompt | chat_model("Paris.") | StrOutputParser()
 
-    result = chain.invoke({"question": "capital?"}, config={"callbacks": [LlmObserveTracer()]})
+    result = chain.invoke({"question": "capital?"}, config={"callbacks": [LlmMetricsTracer()]})
 
     assert result == "Paris."
     assert len(pipeline.traces()) == 1, "one chain invocation is one trace"
@@ -151,7 +151,7 @@ def test_the_tree_matches_langchains_run_hierarchy(pipeline: Pipeline) -> None:
         lambda payload: str(payload), name="inner"
     )
 
-    chain.invoke({"x": 1}, config={"callbacks": [LlmObserveTracer()]})
+    chain.invoke({"x": 1}, config={"callbacks": [LlmMetricsTracer()]})
 
     shape = pipeline.tree()
     assert len(shape["<root>"]) == 1, "exactly one root"
@@ -167,7 +167,7 @@ def test_tools_become_tool_observations(pipeline: Pipeline) -> None:
         """Look a city up."""
         return f"{city} is nice"
 
-    result = lookup.invoke({"city": "Paris"}, config={"callbacks": [LlmObserveTracer()]})
+    result = lookup.invoke({"city": "Paris"}, config={"callbacks": [LlmMetricsTracer()]})
 
     assert result == "Paris is nice"
     observation = pipeline.one(ObservationType.TOOL)
@@ -182,7 +182,7 @@ def test_retrievers_become_retrieval_observations(pipeline: Pipeline) -> None:
         def _get_relevant_documents(self, query: str, **kwargs: Any) -> list[Document]:
             return [Document(page_content=f"about {query}"), Document(page_content="second")]
 
-    docs = Fake().invoke("paris", config={"callbacks": [LlmObserveTracer()]})
+    docs = Fake().invoke("paris", config={"callbacks": [LlmMetricsTracer()]})
 
     assert len(docs) == 2
     observation = pipeline.one(ObservationType.RETRIEVAL)
@@ -196,7 +196,7 @@ def test_a_langchain_error_is_recorded_and_re_raised(pipeline: Pipeline) -> None
 
     with pytest.raises(ValueError, match="chain broke"):
         RunnableLambda(explode, name="boom").invoke(
-            {"x": 1}, config={"callbacks": [LlmObserveTracer()]}
+            {"x": 1}, config={"callbacks": [LlmMetricsTracer()]}
         )
 
     failed = [e for e in pipeline.observations() if e["status"] == ObservationStatus.ERROR]
@@ -205,7 +205,7 @@ def test_a_langchain_error_is_recorded_and_re_raised(pipeline: Pipeline) -> None
 
 
 def test_a_chain_nests_under_an_enclosing_observe_trace(pipeline: Pipeline) -> None:
-    tracer = LlmObserveTracer()
+    tracer = LlmMetricsTracer()
     chain = ChatPromptTemplate.from_template("{q}") | chat_model("Paris.")
 
     @observe(name="handler")
@@ -227,7 +227,7 @@ def test_async_runs_are_traced(pipeline: Pipeline) -> None:
     chain = ChatPromptTemplate.from_template("{q}") | chat_model("Paris.")
 
     async def main() -> Any:
-        return await chain.ainvoke({"q": "capital?"}, config={"callbacks": [LlmObserveTracer()]})
+        return await chain.ainvoke({"q": "capital?"}, config={"callbacks": [LlmMetricsTracer()]})
 
     result = asyncio.run(main())
 
@@ -238,7 +238,7 @@ def test_async_runs_are_traced(pipeline: Pipeline) -> None:
 def test_streaming_records_time_to_first_token(pipeline: Pipeline) -> None:
     """Total latency hides the metric that actually matters for a stream."""
     llm = chat_model("Paris is the capital.")
-    chunks = list(llm.stream("capital?", config={"callbacks": [LlmObserveTracer()]}))
+    chunks = list(llm.stream("capital?", config={"callbacks": [LlmMetricsTracer()]}))
 
     assert chunks, "the caller must still get the stream"
     generation = pipeline.one(ObservationType.GENERATION)
@@ -248,7 +248,7 @@ def test_streaming_records_time_to_first_token(pipeline: Pipeline) -> None:
 
 
 def test_one_tracer_serves_many_invocations(pipeline: Pipeline) -> None:
-    tracer = LlmObserveTracer()
+    tracer = LlmMetricsTracer()
     for _ in range(3):
         chat_model("hi").invoke("q", config={"callbacks": [tracer]})
 
@@ -258,7 +258,7 @@ def test_one_tracer_serves_many_invocations(pipeline: Pipeline) -> None:
 
 
 def test_trace_name_and_user_id_are_applied(pipeline: Pipeline) -> None:
-    tracer = LlmObserveTracer(trace_name="support-bot", user_id="u-42", metadata={"env": "test"})
+    tracer = LlmMetricsTracer(trace_name="support-bot", user_id="u-42", metadata={"env": "test"})
     chat_model("hi").invoke("q", config={"callbacks": [tracer]})
 
     trace = pipeline.traces()[0]
@@ -272,7 +272,7 @@ def test_no_cost_is_ever_computed(pipeline: Pipeline) -> None:
     import json
 
     llm = chat_model("hi", usage={"input_tokens": 5, "output_tokens": 1, "total_tokens": 6})
-    llm.invoke("q", config={"callbacks": [LlmObserveTracer()]})
+    llm.invoke("q", config={"callbacks": [LlmMetricsTracer()]})
 
     assert "cost" not in json.dumps(pipeline.flush()).lower()
 
@@ -283,7 +283,7 @@ def test_no_cost_is_ever_computed(pipeline: Pipeline) -> None:
 
 
 def test_runs_are_released_when_they_end(pipeline: Pipeline) -> None:
-    tracer = LlmObserveTracer()
+    tracer = LlmMetricsTracer()
     chain = ChatPromptTemplate.from_template("{q}") | chat_model("hi") | StrOutputParser()
     chain.invoke({"q": "x"}, config={"callbacks": [tracer]})
 
@@ -292,7 +292,7 @@ def test_runs_are_released_when_they_end(pipeline: Pipeline) -> None:
 
 def test_runs_that_never_end_are_evicted_rather_than_pinned(pipeline: Pipeline) -> None:
     """Rule 4. A crash between callbacks must not leak memory forever."""
-    tracer = LlmObserveTracer(max_runs=10)
+    tracer = LlmMetricsTracer(max_runs=10)
 
     for _ in range(100):
         tracer.on_chain_start({"name": "abandoned"}, {"x": 1}, run_id=uuid4())
@@ -302,7 +302,7 @@ def test_runs_that_never_end_are_evicted_rather_than_pinned(pipeline: Pipeline) 
 
 
 def test_an_end_for_an_unknown_run_is_ignored(pipeline: Pipeline) -> None:
-    tracer = LlmObserveTracer()
+    tracer = LlmMetricsTracer()
     tracer.on_chain_end({"out": 1}, run_id=uuid4())  # never started
     tracer.on_llm_error(RuntimeError("x"), run_id=uuid4())
 
@@ -311,7 +311,7 @@ def test_an_end_for_an_unknown_run_is_ignored(pipeline: Pipeline) -> None:
 
 def test_an_unknown_parent_roots_the_run(pipeline: Pipeline) -> None:
     """A handler attached partway down a tree roots itself instead of guessing."""
-    tracer = LlmObserveTracer()
+    tracer = LlmMetricsTracer()
     run_id = uuid4()
 
     tracer.on_chain_start({"name": "orphan"}, {"x": 1}, run_id=run_id, parent_run_id=uuid4())
@@ -323,7 +323,7 @@ def test_an_unknown_parent_roots_the_run(pipeline: Pipeline) -> None:
 
 
 def test_the_handler_is_safe_to_share_between_threads(pipeline: Pipeline) -> None:
-    tracer = LlmObserveTracer()
+    tracer = LlmMetricsTracer()
     errors: list[BaseException] = []
 
     def run(i: int) -> None:
@@ -353,7 +353,7 @@ def test_a_hostile_payload_does_not_break_the_run(pipeline: Pipeline) -> None:
         def __repr__(self) -> str:
             raise RuntimeError("no repr")
 
-    tracer = LlmObserveTracer()
+    tracer = LlmMetricsTracer()
     run_id = uuid4()
 
     tracer.on_chain_start({"name": "chain"}, {"bad": Hostile()}, run_id=run_id)
@@ -366,14 +366,14 @@ def test_a_hostile_payload_does_not_break_the_run(pipeline: Pipeline) -> None:
 def test_hooks_swallow_their_own_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     """LangChain suppresses handler errors by default, but that is a setting a
     user can flip — the guard has to be ours."""
-    from llmobserve.integrations import langchain as integration
+    from llm_metrics.integrations import langchain as integration
 
     def explode(*_args: Any, **_kwargs: Any) -> Any:
         raise RuntimeError("tracer is broken")
 
     monkeypatch.setattr(integration, "open_span", explode)
 
-    tracer = LlmObserveTracer()
+    tracer = LlmMetricsTracer()
     tracer.raise_error = True
 
     # Must not raise despite open_span being broken and raise_error being set.
@@ -384,7 +384,7 @@ def test_a_chain_still_runs_when_the_sdk_is_disabled(pipeline: Pipeline) -> None
     _runtime.configure(sink=pipeline.buffer, enabled=False)
     chain = ChatPromptTemplate.from_template("{q}") | chat_model("Paris.")
 
-    result = chain.invoke({"q": "capital?"}, config={"callbacks": [LlmObserveTracer()]})
+    result = chain.invoke({"q": "capital?"}, config={"callbacks": [LlmMetricsTracer()]})
 
     assert result.content == "Paris."
     assert pipeline.flush() == []
@@ -398,7 +398,7 @@ def test_a_broken_sink_does_not_break_the_chain() -> None:
     _runtime.configure(sink=broken, enabled=True)
     try:
         chain = ChatPromptTemplate.from_template("{q}") | chat_model("Paris.")
-        result = chain.invoke({"q": "capital?"}, config={"callbacks": [LlmObserveTracer()]})
+        result = chain.invoke({"q": "capital?"}, config={"callbacks": [LlmMetricsTracer()]})
         assert result.content == "Paris."
         broken.flush_once()  # must not propagate
     finally:
@@ -407,7 +407,7 @@ def test_a_broken_sink_does_not_break_the_chain() -> None:
 
 def test_user_id_reaches_an_enclosing_trace(pipeline: Pipeline) -> None:
     """A caller who passed user_id meant it, even if @observe owns the trace."""
-    tracer = LlmObserveTracer(trace_name="support-bot", user_id="u-42")
+    tracer = LlmMetricsTracer(trace_name="support-bot", user_id="u-42")
 
     @observe(name="handler")
     def handle() -> Any:
@@ -421,10 +421,10 @@ def test_user_id_reaches_an_enclosing_trace(pipeline: Pipeline) -> None:
 
 
 def test_an_existing_user_id_is_not_overwritten(pipeline: Pipeline) -> None:
-    from llmobserve import context
-    from llmobserve.models import Trace
+    from llm_metrics import context
+    from llm_metrics.models import Trace
 
-    tracer = LlmObserveTracer(user_id="from-tracer")
+    tracer = LlmMetricsTracer(user_id="from-tracer")
     trace = Trace(name="request", user_id="from-caller")
 
     with context.use_trace(trace):

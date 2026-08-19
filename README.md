@@ -1,15 +1,22 @@
-# llmobserve
+# llm-metrics
 
-[![CI](https://github.com/aadityasinha-dotcom/llmobserve-python/actions/workflows/ci.yml/badge.svg)](https://github.com/aadityasinha-dotcom/llmobserve-python/actions/workflows/ci.yml)
-[![Python](https://img.shields.io/badge/python-3.9%20%E2%80%93%203.13-blue)](https://github.com/aadityasinha-dotcom/llmobserve-python)
+[![CI](https://github.com/aadityasinha-dotcom/llm-metrics/actions/workflows/ci.yml/badge.svg)](https://github.com/aadityasinha-dotcom/llm-metrics/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/badge/python-3.9%20%E2%80%93%203.13-blue)](https://github.com/aadityasinha-dotcom/llm-metrics)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-Python SDK for the llm-observe platform.
+Python SDK for the llm-metrics platform. Distribution name `llm-metrics`,
+import name `llm_metrics`.
+
+> **Not released yet**, so `pip install llm-metrics` does not work. Nothing else
+> owns that name — it is simply unclaimed until the first upload. Install from
+> source:
 
 ```bash
-pip install llmobserve
-pip install "llmobserve[openai]"      # OpenAI wrapper
-pip install "llmobserve[langchain]"   # LangChain callback handler
+git clone https://github.com/aadityasinha-dotcom/llm-metrics
+cd llm-metrics
+pip install -e .                      # core
+pip install -e ".[openai]"            # + OpenAI wrapper
+pip install -e ".[langchain]"         # + LangChain callback handler
 ```
 
 The SDK itself runs on Python 3.9+ with `httpx` as its only dependency. The
@@ -19,8 +26,8 @@ both dropped 3.9 — CI reflects that split.
 ## Usage
 
 ```python
-import llmobserve
-from llmobserve import observe
+import llm_metrics
+from llm_metrics import observe
 
 
 @observe(as_type="tool")
@@ -36,7 +43,7 @@ def answer(question: str) -> str:  # becomes the root of the trace
     return complete(search(question))["content"]
 ```
 
-Set `$LLMOBSERVE_API_KEY` and that is the whole setup. Nested calls join the
+Set `$LLM_METRICS_API_KEY` and that is the whole setup. Nested calls join the
 enclosing trace automatically; a call with no trace open starts one.
 
 `@observe` works bare or called, on sync and async functions, and on generators
@@ -56,13 +63,13 @@ rather than over the microseconds it took to build the generator.
 
 | | |
 |---|---|
-| `LLMOBSERVE_API_KEY` | required; without it the SDK is inert and says so once on stderr |
-| `LLMOBSERVE_HOST`    | defaults to the cloud endpoint |
-| `LLMOBSERVE_DEBUG`   | set to log dropped batches to stderr |
-| `LLMOBSERVE_ENABLED` | set to `0` to make `@observe` a near no-op (~0.2 us/call) |
+| `LLM_METRICS_API_KEY` | required; without it the SDK is inert and says so once on stderr |
+| `LLM_METRICS_HOST`    | defaults to the cloud endpoint |
+| `LLM_METRICS_DEBUG`   | set to log dropped batches to stderr |
+| `LLM_METRICS_ENABLED` | set to `0` to make `@observe` a near no-op (~0.2 us/call) |
 
 Explicit arguments beat environment variables, which beat defaults.
-`llmobserve.configure(...)` sets the same things in code; calls that only touch
+`llm_metrics.configure(...)` sets the same things in code; calls that only touch
 capture flags leave the running buffer and its queued events alone.
 
 Arguments and return values are captured by default and truncated at 2000
@@ -75,7 +82,7 @@ Overhead is ~50 us per call with capture on — 0.01% of a 500 ms LLM call.
 
 ```python
 from openai import OpenAI
-from llmobserve.integrations.openai import wrap_openai
+from llm_metrics.integrations.openai import wrap_openai
 
 client = wrap_openai(OpenAI())
 client.chat.completions.create(model="gpt-4o", messages=[...])
@@ -93,9 +100,9 @@ doing `chunk.choices[0]` unguarded would start raising the moment it was wrapped
 ## LangChain
 
 ```python
-from llmobserve.integrations.langchain import LlmObserveTracer
+from llm_metrics.integrations.langchain import LlmMetricsTracer
 
-tracer = LlmObserveTracer()
+tracer = LlmMetricsTracer()
 chain.invoke({"question": "..."}, config={"callbacks": [tracer]})
 ```
 

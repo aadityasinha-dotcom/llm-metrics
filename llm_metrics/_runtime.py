@@ -5,7 +5,7 @@ a buffer to a client, this module owns a lazily-built default pair and hands
 the decorator an :func:`emit` that never raises.
 
 Construction is lazy on purpose. Building the pipeline at import time would
-start a background thread as a side effect of ``import llmobserve``, which is
+start a background thread as a side effect of ``import llm_metrics``, which is
 rude in a library and actively wrong in anything that forks after import.
 """
 
@@ -17,18 +17,18 @@ import threading
 from dataclasses import dataclass, replace
 from typing import Any
 
-from llmobserve.buffer import (
+from llm_metrics.buffer import (
     DEFAULT_FLUSH_AT,
     DEFAULT_FLUSH_INTERVAL,
     DEFAULT_MAX_SIZE,
     DEFAULT_SHUTDOWN_TIMEOUT,
     EventBuffer,
 )
-from llmobserve.client import ENV_API_KEY, IngestClient
+from llm_metrics.client import ENV_API_KEY, IngestClient
 
 __all__ = ["Settings", "configure", "current_settings", "emit", "flush", "is_enabled", "shutdown"]
 
-ENV_ENABLED = "LLMOBSERVE_ENABLED"
+ENV_ENABLED = "LLM_METRICS_ENABLED"
 
 _FALSEY = frozenset({"0", "false", "no", "off"})
 
@@ -88,7 +88,7 @@ def configure(
 ) -> None:
     """Set up the default pipeline explicitly.
 
-    Optional — leaving it out and setting ``$LLMOBSERVE_API_KEY`` works just as
+    Optional — leaving it out and setting ``$LLM_METRICS_API_KEY`` works just as
     well.
 
     Only arguments that actually affect transport rebuild the pipeline. A call

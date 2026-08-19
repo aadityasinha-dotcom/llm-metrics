@@ -1,8 +1,8 @@
 """Trace LangChain runs through its callback system.
 
-    from llmobserve.integrations.langchain import LlmObserveTracer
+    from llm_metrics.integrations.langchain import LlmMetricsTracer
 
-    tracer = LlmObserveTracer()
+    tracer = LlmMetricsTracer()
     chain.invoke({"question": "..."}, config={"callbacks": [tracer]})
 
 Chains become spans, LLM and chat-model calls become generations, tools become
@@ -38,19 +38,19 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any, TypeVar
 from uuid import UUID
 
-from llmobserve import context
-from llmobserve.decorator import _Span, finish_span, open_span, summarise
-from llmobserve.models import ObservationType, Trace
+from llm_metrics import context
+from llm_metrics.decorator import _Span, finish_span, open_span, summarise
+from llm_metrics.models import ObservationType, Trace
 
 try:
     from langchain_core.callbacks import BaseCallbackHandler
 except ImportError as exc:  # pragma: no cover - depends on the extra
     raise ImportError(
-        "llmobserve's LangChain integration needs langchain-core. "
-        "Install it with: pip install 'llmobserve[langchain]'"
+        "The llm-metrics LangChain integration needs langchain-core. "
+        "Install it with: pip install 'llm-metrics[langchain]'"
     ) from exc
 
-__all__ = ["LlmObserveTracer"]
+__all__ = ["LlmMetricsTracer"]
 
 #: Ceiling on in-flight runs held in the map. Generous for any real tree —
 #: a deep agent loop is dozens of runs, not thousands.
@@ -92,8 +92,8 @@ def _never_raises(method: F) -> F:
     return guarded  # type: ignore[return-value]
 
 
-class LlmObserveTracer(BaseCallbackHandler):
-    """LangChain callback handler that records runs as llmobserve traces.
+class LlmMetricsTracer(BaseCallbackHandler):
+    """LangChain callback handler that records runs as llm-metrics traces.
 
     Args:
         trace_name: Name for traces this handler creates. Defaults to the name

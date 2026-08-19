@@ -1,7 +1,7 @@
 """Trace OpenAI calls without touching the call sites.
 
     from openai import OpenAI
-    from llmobserve.integrations.openai import wrap_openai
+    from llm_metrics.integrations.openai import wrap_openai
 
     client = wrap_openai(OpenAI())
     client.chat.completions.create(model="gpt-4o", messages=[...])
@@ -38,8 +38,8 @@ import inspect
 from collections.abc import Mapping
 from typing import Any
 
-from llmobserve.decorator import finish_span, open_span
-from llmobserve.models import ObservationType
+from llm_metrics.decorator import finish_span, open_span
+from llm_metrics.models import ObservationType
 
 __all__ = ["wrap_openai"]
 
@@ -51,7 +51,7 @@ _TARGETS: tuple[tuple[str, str], ...] = (
     ("embeddings.create", "openai.embeddings"),
 )
 
-_MARKER = "__llmobserve_wrapped__"
+_MARKER = "__llm_metrics_wrapped__"
 
 #: Request parameters worth keeping. The messages go to ``input``; these
 #: describe *how* the call was made and belong in metadata.

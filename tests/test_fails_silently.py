@@ -18,10 +18,10 @@ from typing import Callable
 import httpx
 import pytest
 
-from llmobserve._version import __version__
-from llmobserve.buffer import Deadline, EventBuffer
-from llmobserve.client import ENV_API_KEY, ENV_HOST, IngestClient
-from llmobserve.models import Observation
+from llm_metrics._version import __version__
+from llm_metrics.buffer import Deadline, EventBuffer
+from llm_metrics.client import ENV_API_KEY, ENV_HOST, IngestClient
+from llm_metrics.models import Observation
 
 Handler = Callable[[httpx.Request], httpx.Response]
 

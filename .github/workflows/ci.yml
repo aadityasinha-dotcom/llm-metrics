@@ -36,7 +36,7 @@ jobs:
       # different things is noise, not coverage.
       #
       # The extras are required here even though they are optional at runtime:
-      # LlmObserveTracer subclasses BaseCallbackHandler, and without
+      # LlmMetricsTracer subclasses BaseCallbackHandler, and without
       # langchain-core installed that base resolves to Any, which
       # `mypy --strict` rejects via disallow_subclassing_any.
       - run: make install
@@ -72,12 +72,12 @@ jobs:
           python - <<'PY'
           import threading
           before = threading.active_count()
-          import llmobserve
+          import llm_metrics
           assert threading.active_count() == before, (
-              "importing llmobserve started a background thread; the pipeline "
-              "must stay lazy so `import llmobserve` is safe before a fork"
+              "importing llm_metrics started a background thread; the pipeline "
+              "must stay lazy so `import llm_metrics` is safe before a fork"
           )
-          print("llmobserve", llmobserve.__version__, "imports cleanly on", __import__("sys").version.split()[0])
+          print("llm_metrics", llm_metrics.__version__, "imports cleanly on", __import__("sys").version.split()[0])
           PY
 
       - run: python -m pytest -q

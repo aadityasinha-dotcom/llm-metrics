@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.2.0] — 2026-09-26
+
+Everything below lands on the wire as optional keys and a new `score` event
+type. `llm-observe` stores them from migration 0008 onward; an older server
+ignores the keys and drops the scores, and nothing breaks either way.
+
 ### Added
 
 - **Attribution.** `update_trace(user_id=, session_id=, tags=, name=, metadata=)`
@@ -72,10 +80,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `Trace` and `Observation` payloads carry the new optional keys above. The
   server accepts unknown fields, so older servers ignore them.
+- The default ingest host is the hosted API at `api-eta-eight-10.vercel.app`.
+  The previous default did not resolve; every install without
+  `LLM_METRICS_HOST` set was dropping its events.
 
-## [0.1.0] — unreleased
+## [0.1.0] — 2026-08-19
 
-First cut of the SDK. Not published yet; see **Known gaps** below.
+First cut of the SDK, published to PyPI the same day.
 
 ### Added
 
@@ -125,14 +136,12 @@ First cut of the SDK. Not published yet; see **Known gaps** below.
 
 ### Known gaps
 
-- **Not on PyPI yet.** The distribution name is `llm-metrics` and the import
-  name is `llm_metrics`; both were unclaimed when checked. The package was
-  renamed from `llmobserve` because that name and `llmobserve-sdk` belong to an
-  unrelated, actively published LLM-observability product, which collided on the
-  import name too — its wheel also ships a top-level `llmobserve/` package.
-  `.github/workflows/publish.yml` is wired for trusted publishing but has never
-  run.
+- The package was renamed from `llmobserve` before publishing, because that
+  name and `llmobserve-sdk` belong to an unrelated product whose wheel also
+  ships a top-level `llmobserve/` package.
 - The `os.register_at_fork` paths in `buffer.py` and `client.py` are not covered
   by tests.
 
-[Unreleased]: https://github.com/aadityasinha-dotcom/llm-metrics/compare/main...HEAD
+[Unreleased]: https://github.com/aadityasinha-dotcom/llm-metrics/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/aadityasinha-dotcom/llm-metrics/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/aadityasinha-dotcom/llm-metrics/releases/tag/v0.1.0

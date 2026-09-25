@@ -48,7 +48,7 @@ from llm_metrics.buffer import Deadline
 
 __all__ = ["ClientStats", "IngestClient"]
 
-DEFAULT_HOST = "https://cloud.llm-observe.dev"
+DEFAULT_HOST = "https://api-eta-eight-10.vercel.app"
 INGEST_PATH = "/v1/ingest"
 
 DEFAULT_TIMEOUT = 10.0

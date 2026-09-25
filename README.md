@@ -7,17 +7,11 @@
 Python SDK for the llm-metrics platform. Distribution name `llm-metrics`,
 import name `llm_metrics`.
 
-> **Not released yet**, so `pip install llm-metrics` does not work. Nothing else
-> owns that name — it is simply unclaimed until the first upload. Install from
-> source:
-
 ```bash
-git clone https://github.com/aadityasinha-dotcom/llm-metrics
-cd llm-metrics
-pip install -e .                      # core
-pip install -e ".[openai]"            # + OpenAI wrapper
-pip install -e ".[anthropic]"         # + Anthropic wrapper
-pip install -e ".[langchain]"         # + LangChain callback handler
+pip install llm-metrics                # core
+pip install "llm-metrics[openai]"      # + OpenAI wrapper
+pip install "llm-metrics[anthropic]"   # + Anthropic wrapper
+pip install "llm-metrics[langchain]"   # + LangChain callback handler
 ```
 
 The SDK itself runs on Python 3.9+ with `httpx` as its only dependency. The
@@ -65,7 +59,7 @@ rather than over the microseconds it took to build the generator.
 | | |
 |---|---|
 | `LLM_METRICS_API_KEY`     | required; without it the SDK is inert and says so once on stderr |
-| `LLM_METRICS_HOST`        | defaults to the cloud endpoint |
+| `LLM_METRICS_HOST`        | defaults to the hosted API; set it to your own `llm-observe` deployment to self-host |
 | `LLM_METRICS_DEBUG`       | set to log dropped batches to stderr |
 | `LLM_METRICS_ENABLED`     | set to `0` to make `@observe` a near no-op (~0.2 us/call) |
 | `LLM_METRICS_ENVIRONMENT` | stamped on every trace, e.g. `prod` |

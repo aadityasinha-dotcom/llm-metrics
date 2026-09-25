@@ -14,6 +14,7 @@ from __future__ import annotations
 import contextlib
 import os
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -26,9 +27,27 @@ from llm_metrics.buffer import (
 )
 from llm_metrics.client import ENV_API_KEY, IngestClient
 
-__all__ = ["Settings", "configure", "current_settings", "emit", "flush", "is_enabled", "shutdown"]
+__all__ = [
+    "Settings",
+    "Stats",
+    "configure",
+    "current_settings",
+    "emit",
+    "flush",
+    "is_enabled",
+    "shutdown",
+    "stats",
+]
 
 ENV_ENABLED = "LLM_METRICS_ENABLED"
+ENV_ENVIRONMENT = "LLM_METRICS_ENVIRONMENT"
+ENV_RELEASE = "LLM_METRICS_RELEASE"
+ENV_SAMPLE_RATE = "LLM_METRICS_SAMPLE_RATE"
+
+#: Transforms a captured input or output before it is stored on an event.
+#: Returning ``None`` drops the value. If it raises, the value is dropped too:
+#: shipping something a redactor choked on is the one outcome it must not have.
+Redactor = Callable[[Any], Any]
 
 _FALSEY = frozenset({"0", "false", "no", "off"})
 
@@ -47,6 +66,15 @@ class Settings:
     #: Per-value ceiling on captured input/output. Prompts are large and
     #: responses larger; without a cap one runaway payload can fill the buffer.
     max_value_chars: int = 2_000
+    #: Stamped on every trace the SDK creates. Filters on the dashboard, and
+    #: the only way to tell "the model got worse" from "we deployed".
+    environment: str | None = None
+    release: str | None = None
+    #: Fraction of root traces kept, decided once per trace so a kept trace is
+    #: complete and a dropped one leaves nothing behind. 1.0 keeps everything.
+    sample_rate: float = 1.0
+    #: Applied to every captured input and output before it is stored.
+    redact: Redactor | None = None
 
 
 def _env_enabled() -> bool:
@@ -54,10 +82,34 @@ def _env_enabled() -> bool:
     return True if raw is None else raw.strip().lower() not in _FALSEY
 
 
+def _env_sample_rate() -> float:
+    raw = os.environ.get(ENV_SAMPLE_RATE)
+    if raw is None:
+        return 1.0
+    try:
+        return _clamp_rate(float(raw))
+    except ValueError:
+        return 1.0
+
+
+def _clamp_rate(rate: float) -> float:
+    return min(1.0, max(0.0, rate))
+
+
+def _env_str(name: str) -> str | None:
+    raw = os.environ.get(name)
+    return raw.strip() or None if raw is not None else None
+
+
 # Guards the globals below. Never held while flushing — it is taken only to
 # swap references, never around network I/O.
 _lock = threading.Lock()
-_settings = Settings(enabled=_env_enabled())
+_settings = Settings(
+    enabled=_env_enabled(),
+    environment=_env_str(ENV_ENVIRONMENT),
+    release=_env_str(ENV_RELEASE),
+    sample_rate=_env_sample_rate(),
+)
 _buffer: EventBuffer | None = None
 _client: IngestClient | None = None
 _overridden = False  # a test or embedder supplied its own sink
@@ -80,6 +132,10 @@ def configure(
     capture_input: bool | None = None,
     capture_output: bool | None = None,
     max_value_chars: int | None = None,
+    environment: str | None = _UNSET,
+    release: str | None = _UNSET,
+    sample_rate: float | None = None,
+    redact: Redactor | None = _UNSET,
     max_size: int = _UNSET,
     flush_at: int = _UNSET,
     flush_interval: float = _UNSET,
@@ -98,6 +154,12 @@ def configure(
     the outgoing one is flushed first.
 
     Args:
+        environment: Stamped on every trace, e.g. ``"prod"``. ``None`` clears it.
+        release: Stamped on every trace, e.g. a git SHA. ``None`` clears it.
+        sample_rate: Fraction of root traces to keep, ``0.0`` to ``1.0``. Decided
+            once per trace; children follow their root.
+        redact: Called on every captured input and output. Return the value to
+            store, or ``None`` to drop it. ``None`` here removes the redactor.
         sink: Use this buffer instead of building one. For tests and for
             embedders that want to own the transport. Passing back the buffer
             that is already installed keeps it running.
@@ -113,6 +175,14 @@ def configure(
         updates["capture_output"] = capture_output
     if max_value_chars is not None:
         updates["max_value_chars"] = max_value_chars
+    if environment is not _UNSET:
+        updates["environment"] = environment
+    if release is not _UNSET:
+        updates["release"] = release
+    if sample_rate is not None:
+        updates["sample_rate"] = _clamp_rate(float(sample_rate))
+    if redact is not _UNSET:
+        updates["redact"] = redact
 
     transport = (api_key, host, max_size, flush_at, flush_interval, shutdown_timeout)
     rebuild = sink is not None or any(value is not _UNSET for value in transport)
@@ -237,6 +307,69 @@ def _retire(
         with contextlib.suppress(Exception):  # rule 2
             client.close()
     return delivered
+
+
+@dataclass(frozen=True)
+class Stats:
+    """A point-in-time view of the pipeline's health.
+
+    The SDK fails silently by design, so this is how a user finds out whether
+    it is actually delivering. Every field is a counter since the pipeline was
+    built; ``None`` for the client fields means a custom sink owns transport.
+    """
+
+    enabled: bool
+    #: Events accepted by :func:`emit`.
+    queued: int = 0
+    #: Events handed to the transport.
+    flushed: int = 0
+    #: Events discarded because the buffer was full.
+    dropped_on_overflow: int = 0
+    #: Batches the transport gave up on.
+    failed_batches: int = 0
+    sent_batches: int | None = None
+    sent_events: int | None = None
+    #: Events the transport dropped after exhausting retries or on a 4xx.
+    dropped_by_transport: int | None = None
+    retries: int | None = None
+    last_error: str | None = None
+
+    @property
+    def healthy(self) -> bool:
+        """No event has been lost since the pipeline started."""
+        return not (self.dropped_on_overflow or self.failed_batches or self.dropped_by_transport)
+
+
+def stats() -> Stats:
+    """Counters from the running pipeline. Never raises, never blocks.
+
+    Before the first event there is no pipeline, and the counters are zero.
+    """
+    try:
+        buffer, client = _buffer, _client
+        view = Stats(enabled=_settings.enabled)
+        if buffer is not None:
+            b = buffer.stats
+            view = replace(
+                view,
+                queued=b.queued,
+                flushed=b.flushed,
+                dropped_on_overflow=b.dropped,
+                failed_batches=b.failed_batches,
+            )
+        if client is not None:
+            c = client.stats
+            view = replace(
+                view,
+                sent_batches=c.sent_batches,
+                sent_events=c.sent_events,
+                dropped_by_transport=c.dropped_events,
+                retries=c.retries,
+                last_error=c.last_error,
+            )
+        return view
+    except Exception:  # noqa: BLE001 - rule 2
+        return Stats(enabled=_settings.enabled)
 
 
 def _api_key_present() -> bool:

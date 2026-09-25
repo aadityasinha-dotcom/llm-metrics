@@ -11,6 +11,20 @@ messages, the response, the token counts, and the latency. If a trace is
 already open — say the caller is inside an ``@observe`` function — the
 generation nests under it; otherwise it becomes its own trace.
 
+What is recorded beyond the basics
+----------------------------------
+* **Token detail.** ``cached_tokens`` and ``reasoning_tokens`` as first-class
+  fields, since providers price them differently from the totals they sit
+  inside. Audio and prediction token counts go under ``metadata["usage"]``.
+* **How it ended.** ``finish_reason`` (a rising ``"length"`` rate means silent
+  truncation), whether the model refused, and which tools it asked for.
+* **Provider identity.** ``response_id``, ``system_fingerprint`` (changes when
+  the backend model is silently rolled) and ``service_tier``.
+* **Streams.** Time to first token, output tokens per second, and whether the
+  caller drained the stream or abandoned it. See :mod:`._stream`.
+* **Headers.** Request id, rate-limit headroom, upstream processing time and
+  the number of HTTP attempts the ``openai`` client made. See :mod:`._transport`.
+
 Why this module never imports ``openai``
 ----------------------------------------
 Everything here is duck-typed against the client object. That means the SDK
@@ -34,11 +48,12 @@ What is deliberately not done
 from __future__ import annotations
 
 import contextlib
-import inspect
 from collections.abc import Mapping
 from typing import Any
 
 from llm_metrics.decorator import finish_span, open_span
+from llm_metrics.integrations import _transport
+from llm_metrics.integrations._stream import StreamState, TracedAsyncStream, TracedStream
 from llm_metrics.models import ObservationType
 
 __all__ = ["wrap_openai"]
@@ -61,11 +76,26 @@ _TRACKED_PARAMS = (
     "top_p",
     "max_tokens",
     "max_completion_tokens",
+    "max_output_tokens",
     "n",
     "stream",
     "seed",
     "response_format",
     "reasoning_effort",
+    "service_tier",
+)
+
+_HEADERS = _transport.HeaderSpec(
+    request_id=("x-request-id",),
+    processing_ms=("openai-processing-ms",),
+    rate_limit={
+        "limit_requests": "x-ratelimit-limit-requests",
+        "limit_tokens": "x-ratelimit-limit-tokens",
+        "remaining_requests": "x-ratelimit-remaining-requests",
+        "remaining_tokens": "x-ratelimit-remaining-tokens",
+        "reset_requests": "x-ratelimit-reset-requests",
+        "reset_tokens": "x-ratelimit-reset-tokens",
+    },
 )
 
 
@@ -83,6 +113,7 @@ def wrap_openai(client: Any) -> Any:
             _patch(client, path, name)
         except Exception:  # noqa: BLE001 - rule 2: an un-patchable path is skipped
             continue
+    _transport.install(client, _HEADERS)
     return client
 
 
@@ -96,9 +127,7 @@ def _patch(client: Any, path: str, name: str) -> None:
     if getattr(original, _MARKER, False):
         return  # already wrapped
 
-    # openai decorates `create` with functools.wraps, so the bound method is
-    # not itself a coroutine function even on AsyncOpenAI. Unwrap before asking.
-    if inspect.iscoroutinefunction(inspect.unwrap(original)):
+    if _transport.is_async_callable(original):
         wrapper: Any = _async_wrapper(original, name)
     else:
         wrapper = _sync_wrapper(original, name)
@@ -118,12 +147,13 @@ def _sync_wrapper(original: Any, name: str) -> Any:
         if span is None:
             return original(*args, **kwargs)
         try:
-            response = original(*args, **kwargs)
+            with _transport.active(span.observation):
+                response = original(*args, **kwargs)
         except BaseException as exc:
             finish_span(span, exc=exc)
             raise
         if kwargs.get("stream"):
-            return _TracedStream(response, span)
+            return TracedStream(response, _OpenAIStreamState(span))
         _complete(span, response, kwargs)
         return response
 
@@ -136,12 +166,13 @@ def _async_wrapper(original: Any, name: str) -> Any:
         if span is None:
             return await original(*args, **kwargs)
         try:
-            response = await original(*args, **kwargs)
+            with _transport.active(span.observation):
+                response = await original(*args, **kwargs)
         except BaseException as exc:
             finish_span(span, exc=exc)
             raise
         if kwargs.get("stream"):
-            return _TracedAsyncStream(response, span)
+            return TracedAsyncStream(response, _OpenAIStreamState(span))
         _complete(span, response, kwargs)
         return response
 
@@ -179,9 +210,8 @@ def _complete(span: Any, response: Any, kwargs: Mapping[str, Any]) -> None:
     try:
         observation = span.observation
         observation.model = _get(response, "model") or kwargs.get("model")
-        prompt, completion = _extract_usage(response)
-        observation.prompt_tokens = prompt
-        observation.completion_tokens = completion
+        _apply_usage(observation, _get(response, "usage"))
+        _apply_response_facts(observation, response)
         output = _extract_output(response)
     except Exception:  # noqa: BLE001 - rule 2: still close the span below
         output = None
@@ -195,182 +225,69 @@ def _complete(span: Any, response: Any, kwargs: Mapping[str, Any]) -> None:
 # --------------------------------------------------------------------------- #
 
 
-class _StreamState:
-    """Accumulates a streamed completion into one observation's worth of data."""
+class _OpenAIStreamState(StreamState):
+    """Reads chat-completion chunks and Responses API events."""
 
-    __slots__ = ("chunks", "completion_tokens", "model", "prompt_tokens", "text")
+    __slots__ = ("facts", "model", "tool_calls", "usage")
 
-    def __init__(self) -> None:
-        self.text: list[str] = []
-        self.chunks = 0
+    def __init__(self, span: Any) -> None:
+        super().__init__(span)
         self.model: str | None = None
-        self.prompt_tokens: int | None = None
-        self.completion_tokens: int | None = None
+        self.usage: Any = None
+        self.facts: dict[str, Any] = {}
+        #: ``index -> name``. The name arrives on the first delta for an
+        #: index; later deltas for it carry only argument fragments.
+        self.tool_calls: dict[int, str] = {}
 
-    def observe_chunk(self, chunk: Any) -> None:
-        try:
-            self.chunks += 1
-            self.model = self.model or _get(chunk, "model")
+    def _observe(self, chunk: Any) -> None:
+        self.model = self.model or _get(chunk, "model")
 
-            usage = _get(chunk, "usage")
-            if usage is not None:
-                prompt, completion = _usage_fields(usage)
-                self.prompt_tokens = prompt if prompt is not None else self.prompt_tokens
-                self.completion_tokens = (
-                    completion if completion is not None else self.completion_tokens
-                )
+        usage = _get(chunk, "usage")
+        if usage is not None:
+            self.usage = usage
+            self.completion_tokens = _completion_tokens(usage)
+        _collect_identity(self.facts, chunk)
 
-            for choice in _get(chunk, "choices") or ():
-                delta = _get(choice, "delta")
-                piece = _get(delta, "content") if delta is not None else None
-                if isinstance(piece, str):
-                    self.text.append(piece)
-
-            # Responses API events carry their text on the event itself.
-            piece = _get(chunk, "delta")
-            if isinstance(piece, str):
+        for choice in _get(chunk, "choices") or ():
+            reason = _get(choice, "finish_reason")
+            if reason:
+                self.facts["finish_reason"] = reason
+            delta = _get(choice, "delta")
+            if delta is None:
+                continue
+            piece = _get(delta, "content")
+            if isinstance(piece, str) and piece:
+                self.mark_first_token()
                 self.text.append(piece)
-        except Exception:  # noqa: BLE001 - rule 2: a weird chunk is not fatal
-            pass
+            if _get(delta, "refusal"):
+                self.mark_first_token()
+                self.facts["refusal"] = True
+            for call in _get(delta, "tool_calls") or ():
+                self.mark_first_token()
+                index = _get(call, "index")
+                name = _get(_get(call, "function"), "name")
+                if isinstance(index, int) and name:
+                    self.tool_calls.setdefault(index, name)
 
-    def apply(self, span: Any) -> None:
-        try:
-            observation = span.observation
-            observation.model = self.model
-            observation.prompt_tokens = self.prompt_tokens
-            observation.completion_tokens = self.completion_tokens
-            observation.metadata["stream_chunks"] = self.chunks
-            output: Any = "".join(self.text) if self.text else None
-        except Exception:  # noqa: BLE001 - rule 2
-            output = None
-        finish_span(span, output=output, summarise_output=False)
+        # Responses API: text arrives as events with a string ``delta``, and
+        # the final ``response.completed`` event carries the whole response.
+        piece = _get(chunk, "delta")
+        if isinstance(piece, str) and piece:
+            self.mark_first_token()
+            self.text.append(piece)
+        final = _get(chunk, "response")
+        if final is not None and _get(chunk, "type") == "response.completed":
+            self.usage = _get(final, "usage") or self.usage
+            self.completion_tokens = _completion_tokens(self.usage)
+            self.model = _get(final, "model") or self.model
+            _collect_response_api_facts(self.facts, final)
 
-
-class _TracedStream:
-    """Proxy around ``openai.Stream`` that closes the span when iteration ends.
-
-    A proxy rather than a generator: user code reaches for ``.response``,
-    ``.close()``, and ``with client...`` on the object it gets back, and a bare
-    generator has none of those. ``__getattr__`` forwards everything this class
-    does not define.
-    """
-
-    def __init__(self, stream: Any, span: Any) -> None:
-        self._stream = stream
-        self._span = span
-        self._state = _StreamState()
-        self._finished = False
-        # Initialised here, not in __iter__: openai's Stream supports next()
-        # directly, and __getattr__ would otherwise forward the lookup to the
-        # wrapped stream and raise a confusing AttributeError.
-        self._iterator: Any = None
-
-    def __iter__(self) -> _TracedStream:
-        self._ensure_iterator()
-        return self
-
-    def _ensure_iterator(self) -> None:
-        if self._iterator is None:
-            self._iterator = iter(self._stream)
-
-    def __next__(self) -> Any:
-        self._ensure_iterator()
-        try:
-            chunk = next(self._iterator)
-        except StopIteration:
-            self._settle()
-            raise
-        except BaseException as exc:
-            self._settle(exc)
-            raise
-        self._state.observe_chunk(chunk)
-        return chunk
-
-    def __enter__(self) -> _TracedStream:
-        self._stream.__enter__()
-        return self
-
-    def __exit__(self, *exc: Any) -> Any:
-        # Leaving the block ends the generation even if it was never drained.
-        self._settle()
-        return self._stream.__exit__(*exc)
-
-    def close(self) -> None:
-        self._settle()
-        close = getattr(self._stream, "close", None)
-        if close is not None:
-            close()
-
-    def __getattr__(self, item: str) -> Any:
-        return getattr(self._stream, item)
-
-    def _settle(self, exc: BaseException | None = None) -> None:
-        """Close the span exactly once, however the stream ended."""
-        if self._finished:
-            return
-        self._finished = True
-        if exc is not None:
-            finish_span(self._span, exc=exc)
-        else:
-            self._state.apply(self._span)
-
-
-class _TracedAsyncStream:
-    """``_TracedStream`` for ``AsyncStream``."""
-
-    def __init__(self, stream: Any, span: Any) -> None:
-        self._stream = stream
-        self._span = span
-        self._state = _StreamState()
-        self._finished = False
-        self._iterator: Any = None
-
-    def __aiter__(self) -> _TracedAsyncStream:
-        self._ensure_iterator()
-        return self
-
-    def _ensure_iterator(self) -> None:
-        if self._iterator is None:
-            self._iterator = self._stream.__aiter__()
-
-    async def __anext__(self) -> Any:
-        self._ensure_iterator()
-        try:
-            chunk = await self._iterator.__anext__()
-        except StopAsyncIteration:
-            self._settle()
-            raise
-        except BaseException as exc:
-            self._settle(exc)
-            raise
-        self._state.observe_chunk(chunk)
-        return chunk
-
-    async def __aenter__(self) -> _TracedAsyncStream:
-        await self._stream.__aenter__()
-        return self
-
-    async def __aexit__(self, *exc: Any) -> Any:
-        self._settle()
-        return await self._stream.__aexit__(*exc)
-
-    async def close(self) -> None:
-        self._settle()
-        close = getattr(self._stream, "close", None)
-        if close is not None:
-            await close()
-
-    def __getattr__(self, item: str) -> Any:
-        return getattr(self._stream, item)
-
-    def _settle(self, exc: BaseException | None = None) -> None:
-        if self._finished:
-            return
-        self._finished = True
-        if exc is not None:
-            finish_span(self._span, exc=exc)
-        else:
-            self._state.apply(self._span)
+    def _apply(self, observation: Any) -> None:
+        observation.model = self.model
+        _apply_usage(observation, self.usage)
+        if self.tool_calls:
+            self.facts["tool_calls"] = [self.tool_calls[i] for i in sorted(self.tool_calls)]
+        observation.metadata.update(self.facts)
 
 
 # --------------------------------------------------------------------------- #
@@ -431,23 +348,112 @@ def _extract_params(kwargs: Mapping[str, Any]) -> dict[str, Any]:
     return metadata
 
 
-def _usage_fields(usage: Any) -> tuple[int | None, int | None]:
-    """Chat completions say prompt/completion; the responses API says input/output."""
-    prompt = _get(usage, "prompt_tokens")
-    if prompt is None:
-        prompt = _get(usage, "input_tokens")
-    completion = _get(usage, "completion_tokens")
-    if completion is None:
-        completion = _get(usage, "output_tokens")
-    return _as_int(prompt), _as_int(completion)
-
-
 def _as_int(value: Any) -> int | None:
-    return value if isinstance(value, int) else None
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
-def _extract_usage(response: Any) -> tuple[int | None, int | None]:
-    return _usage_fields(_get(response, "usage"))
+def _first_int(obj: Any, *names: str) -> int | None:
+    for name in names:
+        value = _as_int(_get(obj, name))
+        if value is not None:
+            return value
+    return None
+
+
+def _completion_tokens(usage: Any) -> int | None:
+    return _first_int(usage, "completion_tokens", "output_tokens")
+
+
+def _apply_usage(observation: Any, usage: Any) -> None:
+    """Chat completions say prompt/completion; the Responses API says input/output.
+
+    The detail objects follow the same split. Cached and reasoning tokens
+    become first-class fields; the rarer counts stay in ``metadata["usage"]``
+    so the wire shape does not grow a column per provider feature.
+    """
+    if usage is None:
+        return
+    observation.prompt_tokens = _first_int(usage, "prompt_tokens", "input_tokens")
+    observation.completion_tokens = _completion_tokens(usage)
+
+    prompt_details = _get(usage, "prompt_tokens_details") or _get(usage, "input_tokens_details")
+    output_details = _get(usage, "completion_tokens_details") or _get(
+        usage, "output_tokens_details"
+    )
+    observation.cached_tokens = _first_int(prompt_details, "cached_tokens")
+    observation.reasoning_tokens = _first_int(output_details, "reasoning_tokens")
+
+    extra: dict[str, int] = {}
+    for key, source, name in (
+        ("audio_input_tokens", prompt_details, "audio_tokens"),
+        ("audio_output_tokens", output_details, "audio_tokens"),
+        ("accepted_prediction_tokens", output_details, "accepted_prediction_tokens"),
+        ("rejected_prediction_tokens", output_details, "rejected_prediction_tokens"),
+    ):
+        value = _as_int(_get(source, name))
+        if value:
+            extra[key] = value
+    if extra:
+        observation.metadata["usage"] = extra
+
+
+def _collect_identity(facts: dict[str, Any], response: Any) -> None:
+    """Fields that identify *this* response on the provider's side."""
+    for key in ("system_fingerprint", "service_tier"):
+        value = _get(response, key)
+        if value:
+            facts[key] = value
+    response_id = _get(response, "id")
+    if isinstance(response_id, str) and response_id and "response_id" not in facts:
+        facts["response_id"] = response_id
+
+
+def _apply_response_facts(observation: Any, response: Any) -> None:
+    facts: dict[str, Any] = {}
+    _collect_identity(facts, response)
+
+    choices = _get(response, "choices")
+    if choices:
+        reasons = [_get(choice, "finish_reason") for choice in choices]
+        reasons = [r for r in reasons if r]
+        if reasons:
+            facts["finish_reason"] = reasons[0] if len(set(reasons)) == 1 else reasons
+        names: list[str] = []
+        for choice in choices:
+            message = _get(choice, "message")
+            if _get(message, "refusal"):
+                facts["refusal"] = True
+            for call in _get(message, "tool_calls") or ():
+                name = _get(_get(call, "function"), "name")
+                if name:
+                    names.append(name)
+        if names:
+            facts["tool_calls"] = names
+    else:
+        _collect_response_api_facts(facts, response)
+
+    observation.metadata.update(facts)
+
+
+def _collect_response_api_facts(facts: dict[str, Any], response: Any) -> None:
+    """The Responses API reports completion state on the response itself."""
+    status = _get(response, "status")
+    if status == "incomplete":
+        facts["finish_reason"] = _get(_get(response, "incomplete_details"), "reason") or status
+    elif status:
+        facts["finish_reason"] = "stop" if status == "completed" else status
+
+    names: list[str] = []
+    for item in _get(response, "output") or ():
+        kind = _get(item, "type")
+        if kind == "function_call" and _get(item, "name"):
+            names.append(str(_get(item, "name")))
+        elif kind == "message":
+            for part in _get(item, "content") or ():
+                if _get(part, "type") == "refusal":
+                    facts["refusal"] = True
+    if names:
+        facts["tool_calls"] = names
 
 
 def _extract_output(response: Any) -> Any:

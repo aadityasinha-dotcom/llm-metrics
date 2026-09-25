@@ -14,19 +14,34 @@ The public API surface is intentionally small: anything not listed in
 bump.
 """
 
-from llm_metrics._runtime import configure, flush, shutdown
+from llm_metrics._runtime import Stats, configure, flush, shutdown, stats
 from llm_metrics._version import __version__
+from llm_metrics.annotate import score, update_observation, update_trace
 from llm_metrics.decorator import observe
-from llm_metrics.models import Observation, ObservationStatus, ObservationType, Trace
+from llm_metrics.models import (
+    Observation,
+    ObservationStatus,
+    ObservationType,
+    Score,
+    ScoreSource,
+    Trace,
+)
 
 __all__ = [
     "Observation",
     "ObservationStatus",
     "ObservationType",
+    "Score",
+    "ScoreSource",
+    "Stats",
     "Trace",
     "__version__",
     "configure",
     "flush",
     "observe",
+    "score",
     "shutdown",
+    "stats",
+    "update_observation",
+    "update_trace",
 ]

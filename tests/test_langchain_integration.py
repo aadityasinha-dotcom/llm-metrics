@@ -94,7 +94,7 @@ def pipeline() -> Iterator[Pipeline]:
         _runtime.shutdown(timeout=1.0)
 
 
-def chat_model(*replies: str, usage: dict[str, int] | None = None) -> GenericFakeChatModel:
+def chat_model(*replies: str, usage: dict[str, Any] | None = None) -> GenericFakeChatModel:
     messages = [
         AIMessage(content=reply, usage_metadata=usage) if usage else AIMessage(content=reply)
         for reply in replies
@@ -431,3 +431,77 @@ def test_an_existing_user_id_is_not_overwritten(pipeline: Pipeline) -> None:
         chat_model("hi").invoke("q", config={"callbacks": [tracer]})
 
     assert trace.user_id == "from-caller"
+
+
+# --------------------------------------------------------------------------- #
+# Token detail, finish reason, retrieval quality
+# --------------------------------------------------------------------------- #
+
+
+def test_cached_and_reasoning_tokens_come_from_usage_metadata(pipeline: Pipeline) -> None:
+    llm = chat_model(
+        "Paris.",
+        usage={
+            "input_tokens": 1000,
+            "output_tokens": 300,
+            "total_tokens": 1300,
+            "input_token_details": {"cache_read": 900},
+            "output_token_details": {"reasoning": 250},
+        },
+    )
+
+    llm.invoke("capital?", config={"callbacks": [LlmMetricsTracer()]})
+
+    generation = pipeline.one(ObservationType.GENERATION)
+    assert generation["prompt_tokens"] == 1000
+    assert generation["completion_tokens"] == 300
+    assert generation["cached_tokens"] == 900
+    assert generation["reasoning_tokens"] == 250
+
+
+def test_finish_reason_is_read_from_generation_info() -> None:
+    from llm_metrics.integrations.langchain import _finish_reason
+
+    result = {"generations": [[{"text": "x", "generation_info": {"finish_reason": "length"}}]]}
+    assert _finish_reason(result) == "length"
+
+    via_message = {
+        "generations": [
+            [{"text": "x", "message": {"response_metadata": {"finish_reason": "stop"}}}]
+        ]
+    }
+    assert _finish_reason(via_message) == "stop"
+    assert _finish_reason({"generations": [[{"text": "x"}]]}) is None
+
+
+def test_retrieval_records_context_size_and_scores(pipeline: Pipeline) -> None:
+    from langchain_core.retrievers import BaseRetriever
+
+    class Scored(BaseRetriever):
+        def _get_relevant_documents(self, query: str, **kwargs: Any) -> list[Document]:
+            return [
+                Document(page_content="about paris", metadata={"score": 0.91}),
+                Document(page_content="second", metadata={"relevance_score": 0.4}),
+                Document(page_content="third"),
+            ]
+
+    Scored().invoke("paris", config={"callbacks": [LlmMetricsTracer()]})
+
+    meta = pipeline.one(ObservationType.RETRIEVAL)["metadata"]
+    assert meta["documents"] == 3
+    assert meta["retrieved_chars"] == len("about paris") + len("second") + len("third")
+    assert meta["retrieval_scores"] == [0.91, 0.4, None]
+
+
+def test_retrieval_without_scores_records_none(pipeline: Pipeline) -> None:
+    from langchain_core.retrievers import BaseRetriever
+
+    class Plain(BaseRetriever):
+        def _get_relevant_documents(self, query: str, **kwargs: Any) -> list[Document]:
+            return [Document(page_content="x")]
+
+    Plain().invoke("q", config={"callbacks": [LlmMetricsTracer()]})
+
+    meta = pipeline.one(ObservationType.RETRIEVAL)["metadata"]
+    assert "retrieval_scores" not in meta
+    assert meta["retrieved_chars"] == 1

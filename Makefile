@@ -10,7 +10,7 @@ help:
 	@echo "ci             everything CI runs, minus the 3.9-3.13 matrix"
 
 install:
-	python -m pip install -e ".[dev,openai,langchain]"
+	python -m pip install -e ".[dev,openai,anthropic,langchain]"
 
 test:
 	python -m pytest

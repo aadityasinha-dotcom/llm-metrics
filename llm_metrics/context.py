@@ -50,6 +50,7 @@ from llm_metrics.models import Observation, Trace
 __all__ = [
     "ContextSnapshot",
     "adopt",
+    "current_observation",
     "current_parent_id",
     "current_trace",
     "current_trace_id",
@@ -65,6 +66,12 @@ _TRACE: contextvars.ContextVar[Trace | None] = contextvars.ContextVar(
 )
 _PARENT_ID: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "llm_metrics_parent_id", default=None
+)
+# The live object behind _PARENT_ID, so code inside a traced call can annotate
+# the observation it is running under. Kept separate rather than replacing the
+# id: integrations that nest by explicit id (LangChain) never have the object.
+_OBSERVATION: contextvars.ContextVar[Observation | None] = contextvars.ContextVar(
+    "llm_metrics_observation", default=None
 )
 
 
@@ -90,6 +97,15 @@ def current_parent_id() -> str | None:
     return _PARENT_ID.get()
 
 
+def current_observation() -> Observation | None:
+    """The observation the caller is running inside, or ``None``.
+
+    Returns the live object, so annotations made through it land on the event
+    that is eventually emitted.
+    """
+    return _OBSERVATION.get()
+
+
 # ------------------------------------------------------------------ scopes
 
 
@@ -103,6 +119,7 @@ def use_trace(trace: Trace) -> Iterator[Trace]:
     """
     trace_token = _TRACE.set(trace)
     parent_token = _PARENT_ID.set(None)
+    observation_token = _OBSERVATION.set(None)
     try:
         yield trace
     finally:
@@ -110,6 +127,7 @@ def use_trace(trace: Trace) -> Iterator[Trace]:
         # that produced them, which is why these are context managers rather
         # than a set/reset pair a caller could accidentally split across an
         # await or a thread.
+        _OBSERVATION.reset(observation_token)
         _PARENT_ID.reset(parent_token)
         _TRACE.reset(trace_token)
 
@@ -123,9 +141,11 @@ def use_observation(observation: Observation) -> Iterator[Observation]:
     later sibling in the trace would hang off it.
     """
     token = _PARENT_ID.set(observation.id)
+    observation_token = _OBSERVATION.set(observation)
     try:
         yield observation
     finally:
+        _OBSERVATION.reset(observation_token)
         _PARENT_ID.reset(token)
 
 
@@ -138,6 +158,7 @@ class ContextSnapshot:
 
     trace: Trace | None = None
     parent_id: str | None = None
+    observation: Observation | None = None
 
     @property
     def empty(self) -> bool:
@@ -146,7 +167,9 @@ class ContextSnapshot:
 
 def snapshot() -> ContextSnapshot:
     """Capture the current trace and parent so another thread can adopt them."""
-    return ContextSnapshot(trace=_TRACE.get(), parent_id=_PARENT_ID.get())
+    return ContextSnapshot(
+        trace=_TRACE.get(), parent_id=_PARENT_ID.get(), observation=_OBSERVATION.get()
+    )
 
 
 @contextmanager
@@ -160,8 +183,10 @@ def adopt(snap: ContextSnapshot) -> Iterator[None]:
     """
     trace_token = _TRACE.set(snap.trace)
     parent_token = _PARENT_ID.set(snap.parent_id)
+    observation_token = _OBSERVATION.set(snap.observation)
     try:
         yield
     finally:
+        _OBSERVATION.reset(observation_token)
         _PARENT_ID.reset(parent_token)
         _TRACE.reset(trace_token)

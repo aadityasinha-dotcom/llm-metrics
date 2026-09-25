@@ -35,6 +35,7 @@ from __future__ import annotations
 import contextlib
 import functools
 import inspect
+import random
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping, Sequence
 from contextlib import ExitStack, contextmanager
@@ -43,7 +44,7 @@ from typing import Any, TypeVar, cast, overload
 from llm_metrics import _runtime, context
 from llm_metrics.models import Observation, ObservationType, Trace
 
-__all__ = ["finish_span", "observe", "open_span", "summarise"]
+__all__ = ["finish_span", "observe", "open_span", "redact", "summarise"]
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -102,13 +103,16 @@ class _Spec:
 class _Span:
     """One in-flight observation plus the context scopes it opened."""
 
-    __slots__ = ("observation", "stack", "started", "trace")
+    __slots__ = ("observation", "sampled", "stack", "started", "trace")
 
-    def __init__(self, observation: Observation, trace: Trace | None) -> None:
+    def __init__(self, observation: Observation, trace: Trace | None, sampled: bool = True) -> None:
         self.observation = observation
         #: Set only when *this* span created the root trace and therefore owns
         #: closing and emitting it.
         self.trace = trace
+        #: Inherited from the trace. An unsampled span still nests and still
+        #: times the call — it just never reaches the buffer.
+        self.sampled = sampled
         self.stack = ExitStack()
         self.started = time.perf_counter()
 
@@ -193,6 +197,23 @@ def _clip(text: str, limit: int) -> str:
     return f"{text[:limit]}... [{len(text) - limit} chars truncated]"
 
 
+def redact(value: Any) -> Any:
+    """Run the configured redactor over a captured value. Never raises.
+
+    A redactor that raises drops the value: whatever it was about to scrub is
+    exactly what must not be shipped as-is.
+    """
+    if value is None:
+        return None
+    redactor = _runtime.current_settings().redact
+    if redactor is None:
+        return value
+    try:
+        return redactor(value)
+    except Exception:  # noqa: BLE001 - rule 2, and the safe direction
+        return None
+
+
 def _capture_arguments(
     spec: _Spec, args: Sequence[Any], kwargs: Mapping[str, Any], limit: int
 ) -> Any:
@@ -248,8 +269,16 @@ def open_span(
             trace = context.current_trace()
         created_trace = None
         if trace is None:
-            # No trace open, so this call is the root of one.
-            created_trace = Trace(name=name)
+            # No trace open, so this call is the root of one. This is also the
+            # one place sampling is decided: children read the verdict off the
+            # trace, so a kept trace is whole and a dropped one is silent.
+            settings = _runtime.current_settings()
+            created_trace = Trace(
+                name=name,
+                environment=settings.environment,
+                release=settings.release,
+                sampled=_sample(settings.sample_rate),
+            )
             trace = created_trace
 
         observation = Observation(
@@ -259,10 +288,18 @@ def open_span(
             parent_id=parent_id if parent_id is not None else context.current_parent_id(),
             metadata=dict(metadata) if metadata else {},
         )
-        observation.input = input_value
-        return _Span(observation, created_trace)
+        observation.input = redact(input_value)
+        return _Span(observation, created_trace, sampled=trace.sampled)
     except Exception:  # noqa: BLE001 - rule 2: fall back to no instrumentation
         return None
+
+
+def _sample(rate: float) -> bool:
+    if rate >= 1.0:
+        return True
+    if rate <= 0.0:
+        return False
+    return random.random() < rate
 
 
 def _begin(spec: _Spec, args: Sequence[Any], kwargs: Mapping[str, Any]) -> _Span | None:
@@ -311,14 +348,17 @@ def finish_span(
             settings = _runtime.current_settings()
             capture = capture_output if capture_output is not None else settings.capture_output
             if capture:
-                observation.output = (
+                observation.output = redact(
                     _summarise(output, settings.max_value_chars) if summarise_output else output
                 )
         observation.end()
 
-        # Trace first: it is the parent entity, and the buffer preserves order.
         if span.trace is not None:
             span.trace.end()
+        if not span.sampled:
+            return  # timed and closed, but this trace was sampled out
+        # Trace first: it is the parent entity, and the buffer preserves order.
+        if span.trace is not None:
             _runtime.emit(span.trace)
         _runtime.emit(observation)
     except Exception:  # noqa: BLE001 - rule 2

@@ -305,15 +305,20 @@ class LlmMetricsTracer(BaseCallbackHandler):
             return
         observation = run.span.observation
 
-        prompt, completion = _llm_usage(response)
-        observation.prompt_tokens = prompt
-        observation.completion_tokens = completion
+        _apply_usage(observation, response)
         if not observation.model:
             observation.model = _llm_model(response)
+        reason = _finish_reason(response)
+        if reason:
+            observation.metadata["finish_reason"] = reason
         if run.first_token_at is not None:
             observation.metadata["time_to_first_token_ms"] = round(
                 (run.first_token_at - run.started) * 1000.0, 3
             )
+            generating = time.perf_counter() - run.first_token_at
+            tokens = observation.completion_tokens
+            if tokens and generating > 0:
+                observation.metadata["output_tokens_per_second"] = round(tokens / generating, 2)
 
         self._close(run_id, output=_llm_output(response))
 
@@ -376,7 +381,17 @@ class LlmMetricsTracer(BaseCallbackHandler):
     def on_retriever_end(self, documents: Sequence[Any], *, run_id: UUID, **kwargs: Any) -> None:
         run = self._get(run_id)
         if run is not None:
-            run.span.observation.metadata["documents"] = len(documents)
+            metadata = run.span.observation.metadata
+            metadata["documents"] = len(documents)
+            # How much context this retrieval will push into the prompt, and
+            # how confident the store was — the two numbers that say whether
+            # a RAG step is pulling its weight.
+            metadata["retrieved_chars"] = sum(
+                len(c) for c in (_get(d, "page_content") for d in documents) if isinstance(c, str)
+            )
+            scores = [_score(d) for d in documents]
+            if any(s is not None for s in scores):
+                metadata["retrieval_scores"] = scores
         self._close(run_id, output=[_document(d) for d in documents])
 
     @_never_raises
@@ -455,27 +470,52 @@ def _plain_message(message: Any) -> Any:
     return plain
 
 
-def _llm_usage(response: Any) -> tuple[int | None, int | None]:
+def _apply_usage(observation: Any, response: Any) -> None:
     """Token counts, from whichever place this LangChain version put them.
 
     ``llm_output["token_usage"]`` is the older provider-echo path and is often
-    ``None``; modern chat models carry ``usage_metadata`` on the message.
+    ``None``; modern chat models carry ``usage_metadata`` on the message, and
+    that is also the only place the cached and reasoning subsets appear.
     """
+    for generation in _flat_generations(response):
+        usage = _get(_get(generation, "message"), "usage_metadata")
+        if usage:
+            observation.prompt_tokens = _as_int(_get(usage, "input_tokens"))
+            observation.completion_tokens = _as_int(_get(usage, "output_tokens"))
+            observation.cached_tokens = _as_int(
+                _get(_get(usage, "input_token_details"), "cache_read")
+            )
+            observation.reasoning_tokens = _as_int(
+                _get(_get(usage, "output_token_details"), "reasoning")
+            )
+            return
+
     llm_output = _get(response, "llm_output")
     usage = _get(llm_output, "token_usage") or _get(llm_output, "usage")
-    prompt = _as_int(_get(usage, "prompt_tokens"))
-    completion = _as_int(_get(usage, "completion_tokens"))
-    if prompt is not None or completion is not None:
-        return prompt, completion
+    observation.prompt_tokens = _as_int(_get(usage, "prompt_tokens"))
+    observation.completion_tokens = _as_int(_get(usage, "completion_tokens"))
 
+
+def _finish_reason(response: Any) -> str | None:
+    """Why generation stopped, from ``generation_info`` or the message."""
     for generation in _flat_generations(response):
-        metadata = _get(_get(generation, "message"), "usage_metadata")
-        if metadata:
-            return (
-                _as_int(_get(metadata, "input_tokens")),
-                _as_int(_get(metadata, "output_tokens")),
-            )
-    return None, None
+        info = _get(generation, "generation_info")
+        reason = _get(info, "finish_reason")
+        if not reason:
+            reason = _get(_get(_get(generation, "message"), "response_metadata"), "finish_reason")
+        if reason:
+            return str(reason)
+    return None
+
+
+def _score(doc: Any) -> float | None:
+    """A retriever's relevance score, when the store attached one."""
+    metadata = _get(doc, "metadata")
+    for key in ("score", "relevance_score", "similarity"):
+        value = _get(metadata, key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return float(value)
+    return None
 
 
 def _llm_model(response: Any) -> str | None:

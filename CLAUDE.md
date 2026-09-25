@@ -34,15 +34,27 @@ user code -> @observe decorator -> in-memory buffer -> background thread
 - `buffer.py`   — bounded queue, flush on N events or T seconds, daemon thread
 - `decorator.py`— `@observe()`, sync + async support
 - `context.py`  — `contextvars` holding trace_id and parent_span_id for nesting
-- `models.py`   — Trace, Observation dataclasses
-- `integrations/` — openai wrapper, langchain callback handler
+- `models.py`   — Trace, Observation, Score dataclasses
+- `annotate.py` — `update_trace`, `update_observation`, `score`: attribution from inside a call
+- `integrations/` — openai and anthropic wrappers, langchain callback handler;
+  `_stream.py` (shared stream proxies + first-token timing) and `_transport.py`
+  (response-header hook: request id, rate limits, attempts)
 
 ## Data model (must match server schema)
 
-- **Trace** — one user-facing request. id, name, user_id, metadata, timestamps
+- **Trace** — one user-facing request. id, name, user_id, session_id, tags,
+  environment, release, metadata, timestamps
 - **Observation** — one LLM/tool call. Nestable via `parent_id`. model, input,
-  output, prompt_tokens, completion_tokens, latency_ms
+  output, prompt_tokens, completion_tokens, cached_tokens, reasoning_tokens,
+  latency_ms, prompt_name, prompt_version
+- **Score** — a judgement about a trace or observation. name, value, source
 - Field naming follows OpenTelemetry GenAI semantic conventions where applicable
+- `prompt_tokens` is always the *whole* prompt, cached part included;
+  `cached_tokens` is the subset. Anthropic reports it the other way round and
+  the wrapper normalises — do not undo that
+- Provider-specific facts (`finish_reason`, `tool_calls`, `rate_limit`,
+  `time_to_first_token_ms`, ...) live in `metadata`, on a shared vocabulary
+  across wrappers. New wrappers must use the same keys
 
 ## Contract with the server
 
@@ -87,6 +99,7 @@ Working through the SDK in this sequence:
 5. `decorator.py` — `@observe`, sync then async
 6. `integrations/openai.py`
 7. `integrations/langchain.py`
+8. `annotate.py`, `integrations/anthropic.py`, `_stream.py`, `_transport.py`
 
 Tests that matter most: `test_never_blocks.py` and `test_fails_silently.py`.
 Write them alongside the code they cover, not at the end.

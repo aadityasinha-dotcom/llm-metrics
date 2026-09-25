@@ -59,6 +59,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and on retrievals records `retrieved_chars` and `retrieval_scores`.
 - `integrations/_stream.py` — the stream proxies shared by the provider
   wrappers, with the first-token and throughput timing in one place.
+- **`tests/test_contract.py`** — validates a request captured off the real
+  transport against the server's `openapi.json`, vendored at
+  `tests/contract/openapi.json` and refreshed by `scripts/sync_openapi.py`
+  (`make sync-contract`). Checks the endpoint, the bearer scheme, the
+  `X-SDK-Version` header, the flat envelope, that every event validates
+  against its schema, and that every key the SDK sends is one the server
+  stores - the check that catches a rename the server would otherwise ignore.
+  `jsonschema` joins the dev extras.
 
 ### Changed
 
@@ -67,10 +75,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] — unreleased
 
-First cut of the SDK. Not published: the request payload has not yet been
-validated against the ingest API's `openapi.json`, so the envelope shape, the
-auth header, and the assumption that ingest upserts are all unverified. See
-**Known gaps** below.
+First cut of the SDK. Not published yet; see **Known gaps** below.
 
 ### Added
 
@@ -127,12 +132,6 @@ auth header, and the assumption that ingest upserts are all unverified. See
   import name too — its wheel also ships a top-level `llmobserve/` package.
   `.github/workflows/publish.yml` is wired for trusted publishing but has never
   run.
-- `tests/test_contract.py` does not exist yet — it needs the API's published
-  `openapi.json`. Until then these are assumptions, not facts:
-  - the request envelope is `{"events": [...]}`
-  - auth is `Authorization: Bearer <key>` rather than `X-API-Key`
-  - ingest upserts, since children finish before parents and a batch can carry
-    an observation before the trace it belongs to
 - The `os.register_at_fork` paths in `buffer.py` and `client.py` are not covered
   by tests.
 

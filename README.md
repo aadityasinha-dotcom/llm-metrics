@@ -272,7 +272,11 @@ Every module in the `CLAUDE.md` build order is in place: `models.py`,
 `buffer.py`, `client.py`, `context.py`, `decorator.py`, `annotate.py`, and the
 OpenAI, Anthropic and LangChain integrations.
 
-Not yet done: `tests/test_contract.py`, which needs the API's published
-`openapi.json`. Until it exists, the request envelope (`{"events": [...]}`),
-the `Authorization: Bearer` header, and the assumption that ingest upserts
-(children can arrive in a batch before their parent) are unverified.
+`tests/test_contract.py` validates a real captured request against the
+server's published `openapi.json`, vendored at `tests/contract/openapi.json`:
+the endpoint, the bearer scheme, the `X-SDK-Version` header, the flat
+`{"events": [...]}` envelope, and that every key on every event kind is one the
+server stores rather than merely tolerates. Refresh the copy after a server
+schema change with `make sync-contract` (from a sibling `llm-observe` checkout,
+or `SRC=` a path or URL). The one assumption a schema cannot express, that a
+child may arrive before its parent, is asserted by the server's own suite.

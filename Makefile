@@ -1,4 +1,4 @@
-.PHONY: install test lint fmt build check-package ci clean help
+.PHONY: install test lint fmt build check-package ci clean help sync-contract
 
 help:
 	@echo "install        dev install with extras"
@@ -7,6 +7,7 @@ help:
 	@echo "fmt            ruff --fix + format"
 	@echo "build          build wheel and sdist"
 	@echo "check-package  assert py.typed ships and the extras stay optional"
+	@echo "sync-contract  refresh tests/contract/openapi.json from ../llm-observe (or SRC=path|url)"
 	@echo "ci             everything CI runs, minus the 3.9-3.13 matrix"
 
 install:
@@ -40,6 +41,10 @@ check-package: build
 ci: lint test check-package
 	@echo
 	@echo "ci passed on $$(python -V 2>&1). Not covered here: the 3.9-3.13 matrix."
+
+# Refresh the vendored server contract. Exit 3 means it changed - commit it.
+sync-contract:
+	python scripts/sync_openapi.py $(SRC)
 
 clean:
 	rm -rf build dist *.egg-info .pytest_cache .mypy_cache .ruff_cache

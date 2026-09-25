@@ -59,8 +59,12 @@ user code -> @observe decorator -> in-memory buffer -> background thread
 ## Contract with the server
 
 The SDK and API version independently. `tests/test_contract.py` validates request
-payloads against the API's published `openapi.json`. If that test fails after a
-change, the payload shape drifted — fix the SDK or coordinate a server change.
+payloads against the API's published `openapi.json`, vendored at
+`tests/contract/openapi.json` and refreshed with `make sync-contract`. If that
+test fails after a change, the payload shape drifted — fix the SDK or coordinate
+a server change. The alias table in the test (`parent_id` → `parent_observation_id`,
+`status` → `level`, ...) is part of the contract: the server accepts both
+spellings but publishes only one.
 
 Every request sends `X-SDK-Version`. The ingest endpoint is versioned (`/v1/`).
 

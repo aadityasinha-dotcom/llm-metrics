@@ -264,16 +264,30 @@ def emit(event: Any) -> None:
         pass
 
 
-def flush() -> None:
-    """Drain buffered events on the calling thread.
+def flush(timeout: float | None = None) -> bool:
+    """Deliver every buffered event before returning.
 
-    Blocking, and deliberately not used anywhere inside the SDK. For scripts
-    and tests that want delivery before moving on.
+    Blocking, and deliberately not used anywhere inside the SDK. For scripts,
+    tests, and request handlers on platforms that freeze the process the moment
+    a handler returns (Vercel, Lambda, Cloud Run functions), where "delivered"
+    has to mean the HTTP call has finished, not just that the queue is empty.
+
+    Args:
+        timeout: Upper bound in seconds. ``None`` waits until delivery finishes
+            or fails; the transport has its own bounded retries, so this cannot
+            hang forever even without a timeout.
+
+    Returns:
+        ``True`` when nothing is left queued or in flight, ``False`` on timeout
+        or when the SDK is not configured. Never raises.
     """
     buffer = _buffer
-    if buffer is not None:
-        with contextlib.suppress(Exception):  # rule 2: never crash the host app
-            buffer.flush_once()
+    if buffer is None:
+        return False
+    try:
+        return buffer.flush_once(timeout)
+    except Exception:  # noqa: BLE001 - rule 2: never crash the host app
+        return False
 
 
 def shutdown(timeout: float | None = None) -> bool:

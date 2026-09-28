@@ -354,3 +354,94 @@ def test_interpreter_exit_is_bounded_when_the_ingest_api_hangs() -> None:
         f"child took {elapsed:.1f}s to exit with a wedged flush target — "
         "the shutdown deadline is not bounding interpreter exit"
     )
+
+
+# --------------------------------------------------------------------------- #
+# flush() must mean delivered, not merely dequeued
+# --------------------------------------------------------------------------- #
+
+
+def test_flush_waits_for_a_batch_the_flush_thread_already_took() -> None:
+    """The race behind the 0.2.0 serverless data-loss bug.
+
+    The flush thread pops a batch off the queue *before* it makes the HTTP
+    call. A flush() that ran in that window used to find an empty queue, do
+    nothing, and return - with the batch still undelivered. Here the transport
+    is held open by hand so the window is guaranteed, not timing-dependent.
+    """
+    release = threading.Event()
+    delivered: list[int] = []
+
+    def slow_transport(payload: list[dict[str, object]], deadline: Deadline | None = None) -> None:
+        release.wait(5.0)
+        delivered.append(len(payload))
+
+    buf = EventBuffer(slow_transport, flush_at=1, flush_interval=60.0)
+    buf.add({"i": 0})
+
+    # Let the flush thread take the batch and block inside the transport.
+    deadline = time.monotonic() + 2.0
+    while len(buf) and time.monotonic() < deadline:
+        time.sleep(0.005)
+    assert len(buf) == 0, "the flush thread never picked the batch up"
+    assert delivered == [], "the batch must still be in flight at this point"
+
+    # A flush now has nothing to drain - the bug was returning right here.
+    done = threading.Event()
+    result: list[bool] = []
+
+    def flush_in_background() -> None:
+        result.append(buf.flush_once(timeout=5.0))
+        done.set()
+
+    threading.Thread(target=flush_in_background, daemon=True).start()
+    assert not done.wait(0.3), "flush() returned while the batch was still in flight"
+
+    release.set()
+    assert done.wait(5.0), "flush() never returned after delivery"
+    assert result == [True]
+    assert delivered == [1]
+    buf.shutdown(timeout=1.0)
+
+
+def test_flush_times_out_rather_than_hanging_on_a_wedged_transport() -> None:
+    def wedged(payload: list[dict[str, object]], deadline: Deadline | None = None) -> None:
+        threading.Event().wait()  # never returns
+
+    buf = EventBuffer(wedged, flush_at=1, flush_interval=60.0, shutdown_timeout=0.2)
+    buf.add({"i": 0})
+
+    # flush_once drains on the calling thread, so if it won the race for this
+    # batch it would be the *test* that wedged. Let the flush thread take it.
+    deadline = time.monotonic() + 2.0
+    while len(buf) and time.monotonic() < deadline:
+        time.sleep(0.005)
+    assert len(buf) == 0, "the flush thread never picked the batch up"
+
+    started = time.monotonic()
+    assert buf.flush_once(timeout=0.3) is False
+    assert time.monotonic() - started < 2.0
+
+    # Shutdown must still walk away from the wedged thread.
+    assert buf.shutdown(timeout=0.5) is False
+
+
+def test_flush_returns_true_immediately_when_nothing_is_pending() -> None:
+    def noop(payload: list[dict[str, object]], deadline: Deadline | None = None) -> None:
+        pass
+
+    buf = EventBuffer(noop, flush_at=100, flush_interval=60.0)
+    assert buf.flush_once(timeout=1.0) is True
+    buf.shutdown(timeout=1.0)
+
+
+def test_flush_on_the_public_api_never_raises_when_unconfigured() -> None:
+    import llm_metrics
+    from llm_metrics import _runtime
+
+    saved = _runtime._buffer
+    _runtime._buffer = None
+    try:
+        assert llm_metrics.flush() is False
+    finally:
+        _runtime._buffer = saved

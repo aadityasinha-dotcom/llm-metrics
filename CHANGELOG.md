@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Nothing yet.
 
+## [0.2.1] — 2026-09-29
+
+### Fixed
+
+- **`flush()` now waits for delivery, not just for an empty queue.** The flush
+  thread pops a batch off the queue *before* making the HTTP call, so a
+  `flush()` that ran in that window found nothing to drain and returned with
+  the batch still in flight. Long-running processes never noticed - the
+  background thread finished the send - but on platforms that freeze the
+  process the moment a handler returns (Vercel, Lambda, Cloud Run functions)
+  the last batch of every request was lost. `flush()` now blocks until nothing
+  is queued *or* in flight, takes an optional `timeout` in seconds, and returns
+  `True` on delivery, `False` on timeout or when the SDK is not configured.
+  `EventBuffer.flush_once()` gained the same signature, plus a public
+  `wait_until_idle(timeout)`.
+
 ## [0.2.0] — 2026-09-26
 
 Everything below lands on the wire as optional keys and a new `score` event

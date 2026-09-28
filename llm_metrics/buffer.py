@@ -192,6 +192,13 @@ class EventBuffer:
         # rather than per-batch precisely so an in-flight send sees the arming.
         self._deadline = Deadline()
 
+        # Batches taken off the queue but not yet delivered (or abandoned). A
+        # batch leaves the queue *before* the HTTP call, so "queue is empty"
+        # does not mean "everything has been delivered"; this is the other half
+        # of that state. Guarded by _lock; _idle is notified when it hits zero.
+        self._in_flight = 0
+        self._idle = threading.Condition(self._lock)
+
         self.stats = BufferStats()
 
         if start:
@@ -245,6 +252,8 @@ class EventBuffer:
         self._wake = threading.Event()
         self._shutdown = threading.Event()
         self._deadline = Deadline()
+        self._in_flight = 0
+        self._idle = threading.Condition(self._lock)
         self._thread = None
         self.stats = BufferStats()
         self.start()
@@ -314,14 +323,41 @@ class EventBuffer:
             batch = self._take_batch()
             if not batch:
                 return
-            self._send(batch)
+            try:
+                self._send(batch)
+            finally:
+                self._batch_done()
 
     def _take_batch(self) -> list[Event]:
+        """Pop a batch and mark it in flight, as one atomic step.
+
+        Atomic so that no observer can see the queue empty *and* the in-flight
+        count zero while a batch is actually on its way to the network.
+        """
         with self._lock:
             if not self._queue:
                 return []
             n = min(self._flush_at, len(self._queue))
+            self._in_flight += 1
             return [self._queue.popleft() for _ in range(n)]
+
+    def _batch_done(self) -> None:
+        with self._lock:
+            self._in_flight -= 1
+            if self._in_flight == 0 and not self._queue:
+                self._idle.notify_all()
+
+    def wait_until_idle(self, timeout: float | None = None) -> bool:
+        """Block until nothing is queued and nothing is in flight.
+
+        Returns ``False`` if ``timeout`` elapsed first. Waits only; it does not
+        send anything itself, so it is safe to call from any thread, including
+        while the flush thread is mid-batch - that is the whole point.
+        """
+        with self._idle:
+            return self._idle.wait_for(
+                lambda: self._in_flight == 0 and not self._queue, timeout=timeout
+            )
 
     def _send(self, batch: list[Event]) -> None:
         """Serialise and hand off. Called with no lock held."""
@@ -336,13 +372,26 @@ class EventBuffer:
         except Exception:  # noqa: BLE001 - rule 2: drop events, keep running
             self.stats.failed_batches += 1
 
-    def flush_once(self) -> None:
-        """Drain the buffer on the *calling* thread.
+    def flush_once(self, timeout: float | None = None) -> bool:
+        """Deliver everything queued so far, on the *calling* thread, and wait
+        for anything the flush thread already had in flight.
+
+        The second half is what makes this mean "delivered" rather than "queue
+        empty". The flush thread pops a batch *before* the HTTP call, so at any
+        instant the last batch may be off the queue but not yet on the wire;
+        draining alone would find nothing to do and return with that batch
+        still undelivered. On a serverless platform that freezes the process
+        the moment the handler returns, that batch is lost every time.
 
         Only for tests and for callers who have explicitly opted into blocking.
         The SDK's own code paths never call this.
+
+        Returns:
+            ``True`` once nothing is queued or in flight, ``False`` if
+            ``timeout`` elapsed first (``None`` waits indefinitely).
         """
         self._drain()
+        return self.wait_until_idle(timeout)
 
     # ------------------------------------------------------------------ shutdown
 
